@@ -3,18 +3,21 @@ ERLC=erlc
 
 PARSER=src/erlydtl/erlydtl_parser
 
-all: $(PARSER).erl
+
+all: compile
+
+compile: $(PARSER).erl
 	-mkdir -p ebintest
 	$(ERL) -make 
 
 $(PARSER).erl: $(PARSER).yrl
 	$(ERLC) -o src/erlydtl src/erlydtl/erlydtl_parser.yrl
  
-run:
+run: compile
 	$(ERL) -pa ebin
 
 
-test:
+test: compile
 	$(ERL) -noshell -pa ebin -pa ebintest \
 		-s erlydtl_functional_tests run_tests \
 		-s erlydtl_dateformat_tests run_tests \
