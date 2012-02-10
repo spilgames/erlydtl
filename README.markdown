@@ -1,9 +1,19 @@
 ErlyDTL
 =======
 
-ErlyDTL implements most but not all of the Django Template Language.
+ErlyDTL compiles Django Template Language to Erlang bytecode.
+
+*Supported tags*: autoescape, block, blocktrans, comment, cycle, extends, filter, firstof, for, if, ifequal, ifnotequal, include, now, spaceless, ssi, templatetag, trans, widthratio, with
+
+_Unsupported tags_: csrf_token, ifchanged, regroup, url
+
+*Supported filters*: add, addslashes, capfirst, center, cut, date, default, default_if_none, dictsort, dictsortreversed, divisibleby, escape, escapejs, filesizeformat, first, fix_ampersands, floatformat, force_escape, format_integer, format_number, get_digit, iriencode, join, last, length, length_is, linebreaks, linebreaksbr, linenumbers, ljust, lower, make_list, phonenumeric, pluralize, pprint, random, random_num, random_range, removetags, rjust, safe, safeseq, slice, slugify, stringformat, striptags, time, timesince, timeuntil, title, truncatechars, truncatewords, truncatewords_html, unordered_list, upper, urlencode, urlize, urlizetrunc, wordcount, wordwrap, yesno
+
+_Unsupported filters_: _none_
 
 Project homepage: <http://code.google.com/p/erlydtl/>
+
+Language reference: <http://docs.djangoproject.com/en/dev/ref/templates/builtins/>
 
 
 Compilation
@@ -41,10 +51,14 @@ defaults to the compiled template's directory.
 E.g. if $custom_tags_dir/foo contains `<b>{{ bar }}</b>`, then `{% foo bar=100 %}` 
 will evaluate to `<b>100</b>`. Get it?
 
-* `custom_tags_module` - A module to be used for handling custom tags. Each custom
-tag should correspond to an exported function, e.g.: 
+* `custom_tags_modules` - A list of modules to be used for handling custom
+tags. The modules will be searched in order and take precedence over
+`custom_tags_dir`. Each custom tag should correspond to an exported function,
+e.g.: 
 
-    some_tag(Variables, TranslationFun) -> iolist()
+    some_tag(Variables, Context) -> iolist()
+
+The `Context` is specified at render-time with the `custom_tags_context` option.
 
 * `vars` - Variables (and their values) to evaluate at compile-time rather than
 render-time. 
@@ -63,6 +77,18 @@ will ask gettext_server for the string value on the provided locale.
 For example, adding {locale, "en_US"} will call {key2str, Key, "en_US"}
 for all string marked as trans (`{% trans "StringValue" %}` on templates).
 See README_I18N.
+
+* `blocktrans_fun` - A two-argument fun to use for translating `blocktrans`
+blocks. This will be called once for each pair of `blocktrans` block and locale
+specified in `blocktrans_locales`. The fun should take the form:
+
+    Fun(BlockName, Locale) -> <<"ErlyDTL code">> | default
+
+* `blocktrans_locales` - A list of locales to be passed to `blocktrans_fun`.
+Defaults to [].
+
+* `binary_strings` - Whether to compile strings as binary terms (rather than
+lists). Defaults to `true`.
 
 
 Helper compilation
@@ -95,12 +121,19 @@ values can be atoms, strings, binaries, or (nested) variables.
 
 IOList is the rendered template.
 
-    my_compiled_template:render(Variables, TranslationFun) -> 
+    my_compiled_template:render(Variables, Options) -> 
             {ok, IOList} | {error, Err}
 
-Same as `render/1`, but TranslationFun is a fun/1 that will be used to 
-translate strings appearing inside `{% trans %}` tags. The simplest
-TranslationFun would be `fun(Val) -> Val end`
+Same as `render/1`, but with the following options:
+
+* `translation_fun` - A fun/1 that will be used to translate strings appearing
+inside `{% trans %}` tags. The simplest TranslationFun would be `fun(Val) ->
+Val end`
+
+* `locale` - A string specifying the current locale, for use with the
+`blocktrans_fun` compile-time option.
+
+* `custom_tags_context` - A value that will be passed to custom tags.
 
     my_compiled_template:translatable_strings() -> [String]
 
@@ -125,4 +158,4 @@ From a Unix shell, run:
 
     make test
 
-Note that the tests will create some output in examples/rendered_output.
+Note that the tests will create some output in tests/output.

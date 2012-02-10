@@ -52,11 +52,11 @@ fetch_value(Key, Data) ->
 
 translate(_, none, Default) ->
     Default;
-translate(String, TranslationFun, Default) when is_binary(String) ->
-    translate(binary_to_list(String), TranslationFun, Default);
 translate(String, TranslationFun, Default) when is_function(TranslationFun) ->
     case TranslationFun(String) of
         undefined -> Default;
+        <<"">> -> Default;
+        "" -> Default;
         Str -> Str
     end.
 
@@ -153,23 +153,28 @@ is_true(V) ->
 'lt'(_, _) ->
     false.
 
-stringify_final(In) ->
-   stringify_final(In, []).
-stringify_final([], Out) ->
-   lists:reverse(Out);
-stringify_final([El | Rest], Out) when is_atom(El) ->
-   stringify_final(Rest, [atom_to_list(El) | Out]);
-stringify_final([El | Rest], Out) when is_list(El) ->
-   stringify_final(Rest, [stringify_final(El) | Out]);
-stringify_final([El | Rest], Out) when is_tuple(El) ->
-   stringify_final(Rest, [io_lib:print(El) | Out]);
-stringify_final([El | Rest], Out) ->
-   stringify_final(Rest, [El | Out]).
+stringify_final(In, BinaryStrings) ->
+    stringify_final(In, [], BinaryStrings).
+
+stringify_final([], Out, _) ->
+    lists:reverse(Out);
+stringify_final([El | Rest], Out, false = BinaryStrings) when is_atom(El) ->
+    stringify_final(Rest, [atom_to_list(El) | Out], BinaryStrings);
+stringify_final([El | Rest], Out, true = BinaryStrings) when is_atom(El) ->
+    stringify_final(Rest, [list_to_binary(atom_to_list(El)) | Out], BinaryStrings);
+stringify_final([El | Rest], Out, BinaryStrings) when is_list(El) ->
+    stringify_final(Rest, [stringify_final(El, BinaryStrings) | Out], BinaryStrings);
+stringify_final([El | Rest], Out, false = BinaryStrings) when is_tuple(El) ->
+    stringify_final(Rest, [io_lib:print(El) | Out], BinaryStrings);
+stringify_final([El | Rest], Out, true = BinaryStrings) when is_tuple(El) ->
+    stringify_final(Rest, [list_to_binary(io_lib:print(El)) | Out], BinaryStrings);
+stringify_final([El | Rest], Out, BinaryStrings) ->
+    stringify_final(Rest, [El | Out], BinaryStrings).
 
 init_counter_stats(List) ->
     init_counter_stats(List, undefined).
 
-init_counter_stats(List, Parent) ->
+init_counter_stats(List, Parent) when is_list(List) ->
     [{counter, 1}, 
         {counter0, 0}, 
         {revcounter, length(List)}, 
@@ -189,3 +194,21 @@ increment_counter_stats([{counter, Counter}, {counter0, Counter0}, {revcounter, 
 
 cycle(NamesTuple, Counters) when is_tuple(NamesTuple) ->
     element(fetch_value(counter0, Counters) rem size(NamesTuple) + 1, NamesTuple).
+
+widthratio(Numerator, Denominator, Scale) ->
+    round(Numerator / Denominator * Scale).
+
+spaceless(Contents) ->
+    Contents1 = lists:flatten(Contents),
+    Contents2 = re:replace(Contents1, "^\s+<", "<", [{return,list}]),
+    Contents3 = re:replace(Contents2, ">\s+$", ">", [{return,list}]),
+    Contents4 = re:replace(Contents3, ">\s+<", "><", [global, {return,list}]),
+    Contents4.
+
+read_file(Module, Function, DocRoot, FileName) ->
+    AbsName = case filename:absname(FileName) of
+        FileName -> FileName;
+        _ -> filename:join([DocRoot, FileName])
+    end,
+    {ok, Binary} = Module:Function(AbsName),
+    binary_to_list(Binary).
