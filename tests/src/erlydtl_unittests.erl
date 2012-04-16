@@ -237,7 +237,13 @@ tests() ->
                     <<"Al\nAlbert\nJo\nJoseph\n">>},
                 {"Access parent loop counters",
                     <<"{% for outer in list %}{% for inner in outer %}({{ forloop.parentloop.counter0 }}, {{ forloop.counter0 }})\n{% endfor %}{% endfor %}">>,
-                    [{'list', [["One", "two"], ["One", "two"]]}], <<"(0, 0)\n(0, 1)\n(1, 0)\n(1, 1)\n">>}
+                    [{'list', [["One", "two"], ["One", "two"]]}], <<"(0, 0)\n(0, 1)\n(1, 0)\n(1, 1)\n">>},
+                {"If changed",
+                    <<"{% for x in list %}{% ifchanged %}{{ x }}\n{% endifchanged %}{% endfor %}">>,
+                    [{'list', ["one", "two", "two", "three", "three", "three"]}], <<"one\ntwo\nthree\n">>},
+                {"If changed/else",
+                    <<"{% for x in list %}{% ifchanged %}{{ x }}\n{% else %}foo\n{% endifchanged %}{% endfor %}">>,
+                    [{'list', ["one", "two", "two", "three", "three", "three"]}], <<"one\ntwo\nfoo\nthree\nfoo\nfoo\n">>}
             ]},
         {"for/empty", [
                 {"Simple loop",
@@ -910,6 +916,19 @@ tests() ->
                 [],
                 <<"baz">>}
         ]},
+    {"regroup", [
+            {"Ordered", <<"{% regroup people by gender as gender_list %}{% for gender in gender_list %}{{ gender.grouper }}\n{% for item in gender.list %}{{ item.first_name }}\n{% endfor %}{% endfor %}{% endregroup %}">>, 
+                [{people, [[{first_name, "George"}, {gender, "Male"}], [{first_name, "Bill"}, {gender, "Male"}],
+                            [{first_name, "Margaret"}, {gender, "Female"}], [{first_name, "Condi"}, {gender, "Female"}]]}],
+                <<"Male\nGeorge\nBill\nFemale\nMargaret\nCondi\n">>},
+            {"Unordered", <<"{% regroup people by gender as gender_list %}{% for gender in gender_list %}{{ gender.grouper }}\n{% for item in gender.list %}{{ item.first_name }}\n{% endfor %}{% endfor %}{% endregroup %}">>, 
+                [{people, [[{first_name, "George"}, {gender, "Male"}], 
+                            [{first_name, "Margaret"}, {gender, "Female"}], 
+                            [{first_name, "Condi"}, {gender, "Female"}],
+                            [{first_name, "Bill"}, {gender, "Male"}]
+                        ]}],
+                <<"Male\nGeorge\nFemale\nMargaret\nCondi\nMale\nBill\n">>}
+        ]},
     {"spaceless", [
             {"Beginning", <<"{% spaceless %}    <b>foo</b>{% endspaceless %}">>, [], <<"<b>foo</b>">>},
             {"Middle", <<"{% spaceless %}<b>foo</b>  <b>bar</b>{% endspaceless %}">>, [], <<"<b>foo</b><b>bar</b>">>},
@@ -949,12 +968,12 @@ tests() ->
     {"blocktrans",
         [
             {"blocktrans default locale",
-                <<"{% blocktrans foo %}Hello{% endblocktrans %}">>, [], <<"Hello">>},
+                <<"{% blocktrans %}Hello{% endblocktrans %}">>, [], <<"Hello">>},
             {"blocktrans choose locale",
-                <<"{% blocktrans hello %}Hello, {{ name }}{% endblocktrans %}">>, [{name, "Mr. President"}], [{locale, "de"}],
-                [{blocktrans_locales, ["de"]}, {blocktrans_fun, fun(hello, "de") -> <<"Guten tag, {{ name }}">> end}], <<"Guten tag, Mr. President">>},
+                <<"{% blocktrans %}Hello, {{ name }}{% endblocktrans %}">>, [{name, "Mr. President"}], [{locale, "de"}],
+                [{blocktrans_locales, ["de"]}, {blocktrans_fun, fun("Hello, {{ name }}", "de") -> <<"Guten tag, {{ name }}">> end}], <<"Guten tag, Mr. President">>},
             {"blocktrans with args",
-                <<"{% blocktrans foo with var1=foo %}{{ var1 }}{% endblocktrans %}">>, [{foo, "Hello"}], <<"Hello">>}
+                <<"{% blocktrans with var1=foo %}{{ var1 }}{% endblocktrans %}">>, [{foo, "Hello"}], <<"Hello">>}
         ]},
     {"widthratio", [
             {"Literals", <<"{% widthratio 5 10 100 %}">>, [], <<"50">>},

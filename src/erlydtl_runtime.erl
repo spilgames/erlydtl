@@ -2,6 +2,8 @@
 
 -compile(export_all).
 
+-define(IFCHANGED_CONTEXT_VARIABLE, erlydtl_ifchanged_context).
+
 find_value(_, undefined) ->
     undefined;
 find_value(Key, Fun) when is_function(Fun, 1) ->
@@ -48,6 +50,23 @@ fetch_value(Key, Data) ->
             throw({undefined_variable, Key});
         Val ->
             Val
+    end.
+
+regroup(List, Attribute) ->
+    regroup(List, Attribute, []).
+
+regroup([], _, []) ->
+    [];
+regroup([], _, [[{grouper, LastGrouper}, {list, LastList}]|Acc]) ->
+    lists:reverse([[{grouper, LastGrouper}, {list, lists:reverse(LastList)}]|Acc]);
+regroup([Item|Rest], Attribute, []) ->
+    regroup(Rest, Attribute, [[{grouper, find_value(Attribute, Item)}, {list, [Item]}]]);
+regroup([Item|Rest], Attribute, [[{grouper, PrevGrouper}, {list, PrevList}]|Acc]) ->
+    case find_value(Attribute, Item) of
+        Value when Value =:= PrevGrouper ->
+            regroup(Rest, Attribute, [[{grouper, PrevGrouper}, {list, [Item|PrevList]}]|Acc]);
+        Value ->
+            regroup(Rest, Attribute, [[{grouper, Value}, {list, [Item]}], [{grouper, PrevGrouper}, {list, lists:reverse(PrevList)}]|Acc])
     end.
 
 translate(_, none, Default) ->
@@ -191,6 +210,35 @@ increment_counter_stats([{counter, Counter}, {counter0, Counter0}, {revcounter, 
         {revcounter0, RevCounter0 - 1},
         {first, false}, {last, RevCounter0 =:= 1},
         {parentloop, Parent}].
+
+forloop(Fun, Acc0, Values) ->
+    push_ifchanged_context(),
+    Result = lists:mapfoldl(Fun, Acc0, Values),
+    pop_ifchanged_context(),
+    Result.
+
+push_ifchanged_context() ->
+    IfChangedContextStack = case get(?IFCHANGED_CONTEXT_VARIABLE) of
+        undefined -> [];
+        Stack -> Stack
+    end,
+    put(?IFCHANGED_CONTEXT_VARIABLE, [[]|IfChangedContextStack]).
+
+pop_ifchanged_context() ->
+    [_|Rest] = get(?IFCHANGED_CONTEXT_VARIABLE),
+    put(?IFCHANGED_CONTEXT_VARIABLE, Rest).
+
+ifchanged(SourceText, EvaluatedText, AlternativeText) ->
+    [IfChangedContext|Rest] = get(?IFCHANGED_CONTEXT_VARIABLE),
+    PreviousText = proplists:get_value(SourceText, IfChangedContext),
+    if
+        PreviousText =:= EvaluatedText ->
+            AlternativeText;
+        true ->
+            NewContext = [{SourceText, EvaluatedText}|proplists:delete(SourceText, IfChangedContext)],
+            put(?IFCHANGED_CONTEXT_VARIABLE, [NewContext|Rest]),
+            EvaluatedText
+    end.
 
 cycle(NamesTuple, Counters) when is_tuple(NamesTuple) ->
     element(fetch_value(counter0, Counters) rem size(NamesTuple) + 1, NamesTuple).

@@ -83,6 +83,10 @@ Nonterminals
     ElseBraced
     EndIfBraced
     
+    IfChangedBlock
+    IfChangedBraced
+    EndIfChangedBraced
+
     IfEqualBlock
     IfEqualBraced
     IfEqualExpression
@@ -95,6 +99,10 @@ Nonterminals
 
     CustomTag
     Args
+
+    RegroupBlock
+    RegroupBraced
+    EndRegroupBraced
 
     SpacelessBlock
 
@@ -119,9 +127,11 @@ Nonterminals
 
 Terminals
     and_keyword
+    as_keyword
     autoescape_keyword
     block_keyword
     blocktrans_keyword
+    by_keyword
     call_keyword
     close_tag
     close_var
@@ -136,8 +146,10 @@ Terminals
     endfilter_keyword
     endfor_keyword
     endif_keyword
+    endifchanged_keyword
     endifequal_keyword
     endifnotequal_keyword
+    endregroup_keyword
     endspaceless_keyword
     endwith_keyword
     extends_keyword
@@ -146,6 +158,7 @@ Terminals
     for_keyword
     identifier
     if_keyword
+    ifchanged_keyword
     ifequal_keyword
     ifnotequal_keyword
     in_keyword
@@ -159,6 +172,7 @@ Terminals
     open_tag
     open_var
     parsed_keyword
+    regroup_keyword
     spaceless_keyword
     ssi_keyword
     string_literal
@@ -208,8 +222,10 @@ Elements -> Elements ForBlock : '$1' ++ ['$2'].
 Elements -> Elements IfBlock : '$1' ++ ['$2'].
 Elements -> Elements IfEqualBlock : '$1' ++ ['$2'].
 Elements -> Elements IfNotEqualBlock : '$1' ++ ['$2'].
+Elements -> Elements IfChangedBlock : '$1' ++ ['$2'].
 Elements -> Elements IncludeTag : '$1' ++ ['$2'].
 Elements -> Elements NowTag : '$1' ++ ['$2'].
+Elements -> Elements RegroupBlock : '$1' ++ ['$2'].
 Elements -> Elements SpacelessBlock : '$1' ++ ['$2'].
 Elements -> Elements SSITag : '$1' ++ ['$2'].
 Elements -> Elements TemplatetagTag : '$1' ++ ['$2'].
@@ -301,6 +317,11 @@ Unot -> not_keyword IfExpression : {expr, "not", '$2'}.
 ElseBraced -> open_tag else_keyword close_tag.
 EndIfBraced -> open_tag endif_keyword close_tag.
 
+IfChangedBlock -> IfChangedBraced Elements ElseBraced Elements EndIfChangedBraced : {ifchangedelse, '$2', '$4'}.
+IfChangedBlock -> IfChangedBraced Elements EndIfChangedBraced : {ifchanged, '$2'}.
+IfChangedBraced -> open_tag ifchanged_keyword close_tag.
+EndIfChangedBraced -> open_tag endifchanged_keyword close_tag.
+
 IfEqualBlock -> IfEqualBraced Elements ElseBraced Elements EndIfEqualBraced : {ifequalelse, '$1', '$2', '$4'}.
 IfEqualBlock -> IfEqualBraced Elements EndIfEqualBraced : {ifequal, '$1', '$2'}.
 IfEqualBraced -> open_tag ifequal_keyword IfEqualExpression Value close_tag : ['$3', '$4'].
@@ -313,13 +334,17 @@ IfNotEqualBraced -> open_tag ifnotequal_keyword IfNotEqualExpression Value close
 IfNotEqualExpression -> Value : '$1'.
 EndIfNotEqualBraced -> open_tag endifnotequal_keyword close_tag.
 
+RegroupBlock -> RegroupBraced Elements EndRegroupBraced : {regroup, '$1', '$2'}.
+RegroupBraced -> open_tag regroup_keyword Value by_keyword identifier as_keyword identifier close_tag : {'$3', '$5', '$7'}.
+EndRegroupBraced -> open_tag endregroup_keyword close_tag.
+
 SpacelessBlock -> open_tag spaceless_keyword close_tag Elements open_tag endspaceless_keyword close_tag : {spaceless, '$4'}.
 
 SSITag -> open_tag ssi_keyword Value close_tag : {ssi, '$3'}.
 SSITag -> open_tag ssi_keyword string_literal parsed_keyword close_tag : {ssi_parsed, '$3'}.
 
-BlockTransBlock -> open_tag blocktrans_keyword identifier close_tag Elements open_tag endblocktrans_keyword close_tag : {blocktrans, '$3', [], '$5'}.
-BlockTransBlock -> open_tag blocktrans_keyword identifier with_keyword Args close_tag Elements open_tag endblocktrans_keyword close_tag : {blocktrans, '$3', '$5', '$7'}.
+BlockTransBlock -> open_tag blocktrans_keyword close_tag Elements open_tag endblocktrans_keyword close_tag : {blocktrans, [], '$4'}.
+BlockTransBlock -> open_tag blocktrans_keyword with_keyword Args close_tag Elements open_tag endblocktrans_keyword close_tag : {blocktrans, '$4', '$6'}.
 
 TemplatetagTag -> open_tag templatetag_keyword Templatetag close_tag : {templatetag, '$3'}.
 

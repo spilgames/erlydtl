@@ -78,7 +78,7 @@ scan([], Scanned, _, in_text) ->
 
                             "if", "else", "endif", "not", "or", "and", 
 
-                            %TODO "ifchanged", 
+                            "ifchanged", "endifchanged",
                             
                             "ifequal", "endifequal", 
 
@@ -88,7 +88,7 @@ scan([], Scanned, _, in_text) ->
 
                             "now", 
 
-                            %TODO "regroup", 
+                            "regroup", "endregroup", "as", "by",
                             
                             "spaceless", "endspaceless", 
                             
