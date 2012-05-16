@@ -317,9 +317,10 @@ Unot -> not_keyword IfExpression : {expr, "not", '$2'}.
 ElseBraced -> open_tag else_keyword close_tag.
 EndIfBraced -> open_tag endif_keyword close_tag.
 
-IfChangedBlock -> IfChangedBraced Elements ElseBraced Elements EndIfChangedBraced : {ifchangedelse, '$2', '$4'}.
-IfChangedBlock -> IfChangedBraced Elements EndIfChangedBraced : {ifchanged, '$2'}.
+IfChangedBlock -> IfChangedBraced Elements ElseBraced Elements EndIfChangedBraced : {ifchangedelse, '$1', '$2', '$4'}.
+IfChangedBlock -> IfChangedBraced Elements EndIfChangedBraced : {ifchanged, '$1', '$2'}.
 IfChangedBraced -> open_tag ifchanged_keyword close_tag.
+IfChangedBraced -> open_tag ifchanged_keyword Values close_tag : '$3'.
 EndIfChangedBraced -> open_tag endifchanged_keyword close_tag.
 
 IfEqualBlock -> IfEqualBraced Elements ElseBraced Elements EndIfEqualBraced : {ifequalelse, '$1', '$2', '$4'}.

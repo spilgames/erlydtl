@@ -8,15 +8,20 @@ find_value(_, undefined) ->
     undefined;
 find_value(Key, Fun) when is_function(Fun, 1) ->
     Fun(Key);
-find_value(Key, L) when is_list(L) ->
-    case proplists:get_value(Key, L) of
-        undefined ->
-            case proplists:get_value(atom_to_list(Key), L) of
-                undefined ->
-                    proplists:get_value(list_to_binary(atom_to_list(Key)), L);
-                Val -> Val
-            end;
-        Val -> Val
+find_value(Key, L) when is_atom(Key), is_list(L) ->
+    case lists:keyfind(Key, 1, L) of
+        false           -> find_value(atom_to_list(Key), L);
+        {Key, Value}    -> Value
+    end;
+find_value(Key, L) when is_list(Key), is_list(L) ->
+    case lists:keyfind(Key, 1, L) of
+        false           -> find_value(list_to_binary(Key), L);
+        {Key, Value}    -> Value
+    end;
+find_value(Key, L) when is_binary(Key), is_list(L) ->
+    case lists:keyfind(Key, 1, L) of
+        false           -> undefined;
+        {Key, Value}    -> Value
     end;
 find_value(Key, {GBSize, GBData}) when is_integer(GBSize) ->
     case gb_trees:lookup(Key, {GBSize, GBData}) of
@@ -228,16 +233,25 @@ pop_ifchanged_context() ->
     [_|Rest] = get(?IFCHANGED_CONTEXT_VARIABLE),
     put(?IFCHANGED_CONTEXT_VARIABLE, Rest).
 
-ifchanged(SourceText, EvaluatedText, AlternativeText) ->
+ifchanged(Expressions) ->
     [IfChangedContext|Rest] = get(?IFCHANGED_CONTEXT_VARIABLE),
-    PreviousText = proplists:get_value(SourceText, IfChangedContext),
+    {Result, NewContext} = lists:foldl(fun (Expr, {ProvResult, Context}) when ProvResult == true ->
+                                               {_, NContext} = ifchanged2(Expr, Context),
+                                               {true, NContext};
+                                           (Expr, {_ProvResult, Context}) ->
+                                               ifchanged2(Expr, Context)
+                                       end, {false, IfChangedContext}, Expressions),
+    put(?IFCHANGED_CONTEXT_VARIABLE, [NewContext|Rest]),
+    Result.
+
+ifchanged2({Key, Value}, IfChangedContext) ->
+    PreviousValue = proplists:get_value(Key, IfChangedContext),
     if
-        PreviousText =:= EvaluatedText ->
-            AlternativeText;
+        PreviousValue =:= Value ->
+            {false, IfChangedContext};
         true ->
-            NewContext = [{SourceText, EvaluatedText}|proplists:delete(SourceText, IfChangedContext)],
-            put(?IFCHANGED_CONTEXT_VARIABLE, [NewContext|Rest]),
-            EvaluatedText
+            NewContext = [{Key, Value}|proplists:delete(Key, IfChangedContext)],
+            {true, NewContext}
     end.
 
 cycle(NamesTuple, Counters) when is_tuple(NamesTuple) ->
