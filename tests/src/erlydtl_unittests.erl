@@ -16,7 +16,10 @@ tests() ->
                     [{var1, 0.42}], <<"The price of milk is: 0.42">>},
                 {"No spaces",
                     <<"{{var1}}">>,
-                    [{var1, "foo"}], <<"foo">>}
+                    [{var1, "foo"}], <<"foo">>},
+                {"Variable name is a tag name",
+                    <<"{{ comment }}">>,
+                    [{comment, "Nice work!"}], <<"Nice work!">>}
             ]},
         {"comment", [
                 {"comment block is excised",
@@ -87,6 +90,13 @@ tests() ->
         {"if", [
                 {"If/else",
                     <<"{% if var1 %}boo{% else %}yay{% endif %}">>, [{var1, ""}], <<"yay">>},
+                {"If elif",
+		    <<"{% if var1 %}boo{% elif var2 %}yay{% endif %}">>, [{var1, ""}, {var2, "happy"}], <<"yay">>},
+                {"If elif/else",
+		    <<"{% if var1 %}boo{% elif var2 %}sad{% else %}yay{% endif %}">>, [{var1, ""}, {var2, ""}], <<"yay">>},
+                {"If elif/elif/else",
+		    <<"{% if var1 %}boo{% elif var2 %}yay{% elif var3 %}sad{% else %}noo{% endif %}">>, [{var1, ""},
+			{var2, "happy"}, {var3, "not_taken"}], <<"yay">>},
                 {"If",
                     <<"{% if var1 %}boo{% endif %}">>, [{var1, ""}], <<>>},
                 {"If not",
@@ -359,9 +369,27 @@ tests() ->
                 {"Escape is applied last",
                     <<"{{ var1|escape|linebreaksbr }}">>, [{var1, <<"\n">>}],
                     <<"&lt;br /&gt;">>},
-                {"|add:4",
-                    <<"{{ one|add:4 }}">>, [{one, "1"}],
-                    <<"5">>},
+		{"add; lhs number, rhs number",
+		      <<"{{ one|add:4}}">>, [{one, 1}],
+		      <<"5">>},
+		{"add; lhs numeric string, rhs number",
+		      <<"{{ one|add:4}}">>, [{one, "1"}],
+		      <<"5">>},
+		{"add; lhs number, rhs numeric string",
+		      <<"{{ one|add:'4'}}">>, [{one, 1}],
+		      <<"5">>},
+		{"add; lhs non-numeric string, rhs number",
+		      <<"{{ one|add:4}}">>, [{one, "foo"}],
+		      <<"foo4">>},
+		{"add; lhs number, rhs non-numeric string",
+		      <<"{{ one|add:'foo'}}">>, [{one, 1}],
+		      <<"1foo">>},
+		{"add; lhs non-numeric string, rhs non-numeric string",
+		      <<"{{ one|add:'bar'}}">>, [{one, "foo"}],
+		      <<"foobar">>},
+		{"add; lhs numeric string, rhs numeric string",
+		      <<"{{ one|add:'4'}}">>, [{one, "1"}],
+		      <<"5">>},
                 {"|addslashes",
                     <<"{{ var1|addslashes }}">>, [{var1, "Jimmy's \"great\" meats'n'things"}],
                     <<"Jimmy\\'s \\\"great\\\" meats\\'n\\'things">>},
@@ -399,6 +427,13 @@ tests() ->
                    <<"{{ var1|default_if_none:\"foo\" }}">>, [], <<"foo">>},
                 {"|default_if_none:\"foo\" 2",
                     <<"{{ var1|default_if_none:\"foo\" }}">>, [{var1, "bar"}], <<"bar">>},
+		{"|dictsort 1",
+		 <<"{{ var1|dictsort:\"foo\" }}">>,
+		 [{var1,[[{foo,2}],[{foo,1}]]}], <<"{foo,1}{foo,2}">>},
+	        {"|dictsort 2",
+		 <<"{{ var1|dictsort:\"foo.bar\" }}">>,
+		 [{var1,[[{foo,[{bar,2}]}],[{foo,[{bar,1}]}]]}],
+		 <<"{foo,[{bar,1}]}{foo,[{bar,2}]}">>},
                 {"|divisibleby:\"3\"",
                     <<"{% if var1|divisibleby:\"3\" %}yay{% endif %}">>, [{var1, 21}], <<"yay">>},
                 {"|divisibleby:\"3\"",
@@ -791,6 +826,15 @@ tests() ->
                 {"|title (pre-formatted)",
                     <<"{{ \"My Title Case\"|title }}">>, [],
                     <<"My Title Case">>},
+                {"|title (wacky separators)",
+                    <<"{{ \"my-title!case\"|title }}">>, [],
+                    <<"My-Title!Case">>},
+                {"|title (numbers)",
+                    <<"{{ \"my-title123CaSe\"|title }}">>, [],
+                    <<"My-Title123case">>},
+                {"|title (Irish names)",
+                    <<"{{ \"who's o'malley?\"|title }}">>, [],
+                    <<"Who's O'Malley?">>},
                 {"|truncatechars:0",
                     <<"{{ var1|truncatechars:0 }}">>, [{var1, "Empty Me"}],
                     <<"">>},
@@ -800,6 +844,12 @@ tests() ->
                 {"|truncatechars:17",
                     <<"{{ var1|truncatechars:17 }}">>, [{var1, "Don't Truncate Me"}],
                     <<"Don't Truncate Me">>},
+                {"|truncatechars:1 (UTF-8)",
+                    <<"{{ var1|truncatechars:1 }}">>, [{var1, "\x{E2}\x{82}\x{AC}1.99"}],
+                    <<"\x{E2}\x{82}\x{AC}...">>},
+                {"|truncatechars:2 (UTF-8)",
+                    <<"{{ var1|truncatechars:2 }}">>, [{var1, "\x{E2}\x{82}\x{AC}1.99"}],
+                    <<"\x{E2}\x{82}\x{AC}1...">>},
                 {"|truncatewords:0",
                     <<"{{ var1|truncatewords:0 }}">>, [{var1, "Empty Me"}],
                     <<"">>},
@@ -946,12 +996,31 @@ tests() ->
                             [{first_name, "Condi"}, {gender, "Female"}],
                             [{first_name, "Bill"}, {gender, "Male"}]
                         ]}],
-                <<"Male\nGeorge\nFemale\nMargaret\nCondi\nMale\nBill\n">>}
+                <<"Male\nGeorge\nFemale\nMargaret\nCondi\nMale\nBill\n">>},
+	    {"NestedOrdered", <<"{% regroup people by name.last as lastname_list %}{% for lastname in lastname_list %}{{ lastname.grouper }}\n{% for item in lastname.list %}{{ item.name.first }}\n{% endfor %}{% endfor %}{% endregroup %}">>,
+                [{people, [[{name, [{first,"George"},{last,"Costanza"}]}],
+			   [{name, [{first,"Margaret"},{last,"Costanza"}]}],
+			   [{name, [{first,"Bill"},{last,"Buffalo"}]}],
+			   [{name, [{first,"Condi"},{last,"Buffalo"}]}]]}],
+               <<"Costanza\nGeorge\nMargaret\nBuffalo\nBill\nCondi\n">>},
+	    {"NestedUnordered", <<"{% regroup people by name.last as lastname_list %}{% for lastname in lastname_list %}{{ lastname.grouper }}\n{% for item in lastname.list %}{{ item.name.first }}\n{% endfor %}{% endfor %}{% endregroup %}">>,
+                [{people, [[{name, [{first,"George"},{last,"Costanza"}]}],
+			   [{name, [{first,"Bill"},{last,"Buffalo"}]}],
+			   [{name, [{first,"Margaret"},{last,"Costanza"}]}],
+			   [{name, [{first,"Condi"},{last,"Buffalo"}]}]]}],
+               <<"Costanza\nGeorge\nBuffalo\nBill\nCostanza\nMargaret\nBuffalo\nCondi\n">>},
+	    {"Filter", <<"{% regroup people|dictsort:\"name.last\" by name.last as lastname_list %}{% for lastname in lastname_list %}{{ lastname.grouper }}\n{% for item in lastname.list %}{{ item.name.first }}\n{% endfor %}{% endfor %}{% endregroup %}">>,
+		  [{people, [[{name, [{first,"George"},{last,"Costanza"}]}],
+			     [{name, [{first,"Bill"},{last,"Buffalo"}]}],
+			     [{name, [{first,"Margaret"},{last,"Costanza"}]}],
+			     [{name, [{first,"Condi"},{last,"Buffalo"}]}]]}],
+		  <<"Buffalo\nBill\nCondi\nCostanza\nGeorge\nMargaret\n">>}
         ]},
     {"spaceless", [
             {"Beginning", <<"{% spaceless %}    <b>foo</b>{% endspaceless %}">>, [], <<"<b>foo</b>">>},
             {"Middle", <<"{% spaceless %}<b>foo</b>  <b>bar</b>{% endspaceless %}">>, [], <<"<b>foo</b><b>bar</b>">>},
-            {"End", <<"{% spaceless %}<b>foo</b>  {% endspaceless %}">>, [], <<"<b>foo</b>">>}
+            {"End", <<"{% spaceless %}<b>foo</b>  {% endspaceless %}">>, [], <<"<b>foo</b>">>},
+            {"NewLine", <<"{% spaceless %}\n<div> \n <b>foo</b> \n </div>\n {% endspaceless %}">>, [], <<"<div><b>foo</b></div>">>}
         ]},
     {"templatetag", [
             {"openblock", <<"{% templatetag openblock %}">>, [], <<"{%">>},
@@ -994,6 +1063,14 @@ tests() ->
             {"blocktrans with args",
                 <<"{% blocktrans with var1=foo %}{{ var1 }}{% endblocktrans %}">>, [{foo, "Hello"}], <<"Hello">>}
         ]},
+    {"verbatim", [
+            {"Plain verbatim",
+                <<"{% verbatim %}{{ oh no{% foobar %}{% endverbatim %}">>, [],
+                <<"{{ oh no{% foobar %}">>},
+            {"Named verbatim",
+                <<"{% verbatim foobar %}{% verbatim %}{% endverbatim foobar2 %}{% endverbatim foobar %}">>, [],
+                <<"{% verbatim %}{% endverbatim foobar2 %}">>}
+        ]},
     {"widthratio", [
             {"Literals", <<"{% widthratio 5 10 100 %}">>, [], <<"50">>},
             {"Rounds up", <<"{% widthratio a b 100 %}">>, [{a, 175}, {b, 200}], <<"88">>}
@@ -1009,12 +1086,18 @@ tests() ->
      {"unicode", [
              {"(tm) somewhere",
                  <<"™">>, [], <<"™">>}
+        ]},
+     {"contrib_humanize", [
+             {"intcomma",
+                 <<"{{ a|intcomma }} {{ b|intcomma }} {{ c|intcomma }} {{ d|intcomma }}">>,
+                     [{a, 999}, {b, 123456789}, {c, 12345}, {d, 1234567890}],
+                     <<"999 123,456,789 12,345 1,234,567,890">>}
         ]}
     ].
  
 run_tests() ->
     io:format("Running unit tests...~n"),
-    DefaultOptions = [],
+    DefaultOptions = [{custom_filters_modules, [erlydtl_contrib_humanize]}],
     Failures = lists:foldl(
         fun({Group, Assertions}, GroupAcc) ->
                 io:format(" Test group ~p...~n", [Group]),

@@ -4,6 +4,9 @@
 
 -define(IFCHANGED_CONTEXT_VARIABLE, erlydtl_ifchanged_context).
 
+find_value(Key, Data, _, _) ->
+    find_value(Key, Data).
+
 find_value(_, undefined) ->
     undefined;
 find_value(Key, Fun) when is_function(Fun, 1) ->
@@ -49,10 +52,20 @@ find_value(Key, Tuple) when is_tuple(Tuple) ->
             end
     end.
 
-fetch_value(Key, Data) ->
+find_deep_value([Key|Rest],Item) ->
+    case find_value(Key,Item) of
+	undefined -> undefined;
+	NewItem -> find_deep_value(Rest,NewItem)
+    end;
+find_deep_value([],Item) -> Item.
+
+fetch_value(Key, Data, FileName, Pos) ->
     case find_value(Key, Data) of
         undefined ->
-            throw({undefined_variable, Key});
+            throw({undefined_variable, 
+                    [{name, Key},
+                        {file, FileName},
+                        {line, Pos}]});
         Val ->
             Val
     end.
@@ -65,9 +78,9 @@ regroup([], _, []) ->
 regroup([], _, [[{grouper, LastGrouper}, {list, LastList}]|Acc]) ->
     lists:reverse([[{grouper, LastGrouper}, {list, lists:reverse(LastList)}]|Acc]);
 regroup([Item|Rest], Attribute, []) ->
-    regroup(Rest, Attribute, [[{grouper, find_value(Attribute, Item)}, {list, [Item]}]]);
+    regroup(Rest, Attribute, [[{grouper, find_deep_value(Attribute, Item)}, {list, [Item]}]]);
 regroup([Item|Rest], Attribute, [[{grouper, PrevGrouper}, {list, PrevList}]|Acc]) ->
-    case find_value(Attribute, Item) of
+    case find_deep_value(Attribute, Item) of
         Value when Value =:= PrevGrouper ->
             regroup(Rest, Attribute, [[{grouper, PrevGrouper}, {list, [Item|PrevList]}]|Acc]);
         Value ->
@@ -185,7 +198,7 @@ stringify_final([], Out, _) ->
 stringify_final([El | Rest], Out, false = BinaryStrings) when is_atom(El) ->
     stringify_final(Rest, [atom_to_list(El) | Out], BinaryStrings);
 stringify_final([El | Rest], Out, true = BinaryStrings) when is_atom(El) ->
-    stringify_final(Rest, [list_to_binary(atom_to_list(El)) | Out], BinaryStrings);
+    stringify_final(Rest, [atom_to_binary(El, latin1) | Out], BinaryStrings);
 stringify_final([El | Rest], Out, BinaryStrings) when is_list(El) ->
     stringify_final(Rest, [stringify_final(El, BinaryStrings) | Out], BinaryStrings);
 stringify_final([El | Rest], Out, false = BinaryStrings) when is_tuple(El) ->
@@ -255,16 +268,16 @@ ifchanged2({Key, Value}, IfChangedContext) ->
     end.
 
 cycle(NamesTuple, Counters) when is_tuple(NamesTuple) ->
-    element(fetch_value(counter0, Counters) rem size(NamesTuple) + 1, NamesTuple).
+    element(find_value(counter0, Counters) rem size(NamesTuple) + 1, NamesTuple).
 
 widthratio(Numerator, Denominator, Scale) ->
     round(Numerator / Denominator * Scale).
 
 spaceless(Contents) ->
     Contents1 = lists:flatten(Contents),
-    Contents2 = re:replace(Contents1, "^\s+<", "<", [{return,list}]),
-    Contents3 = re:replace(Contents2, ">\s+$", ">", [{return,list}]),
-    Contents4 = re:replace(Contents3, ">\s+<", "><", [global, {return,list}]),
+    Contents2 = re:replace(Contents1, "^\\s+<", "<", [{return,list}]),
+    Contents3 = re:replace(Contents2, ">\\s+$", ">", [{return,list}]),
+    Contents4 = re:replace(Contents3, ">\\s+<", "><", [global, {return,list}]),
     Contents4.
 
 read_file(Module, Function, DocRoot, FileName) ->

@@ -3,7 +3,7 @@ ErlyDTL
 
 ErlyDTL compiles Django Template Language to Erlang bytecode.
 
-*Supported tags*: autoescape, block, blocktrans, comment, cycle, extends, filter, firstof, for, if, ifchanged, ifequal, ifnotequal, include, now, regroup, spaceless, ssi, templatetag, trans, widthratio, with
+*Supported tags*: autoescape, block, blocktrans, comment, cycle, extends, filter, firstof, for, if, ifchanged, ifequal, ifnotequal, include, now, regroup, spaceless, ssi, templatetag, trans, verbatim, widthratio, with
 
 _Unsupported tags_: csrf_token, url
 
@@ -53,12 +53,17 @@ will evaluate to `<b>100</b>`. Get it?
 
 * `custom_tags_modules` - A list of modules to be used for handling custom
 tags. The modules will be searched in order and take precedence over
-`custom_tags_dir`. Each custom tag should correspond to an exported function,
-e.g.: 
+`custom_tags_dir`. Each custom tag should correspond to an exported function
+with one of the following signatures: 
 
-    some_tag(Variables, Context) -> iolist()
+    some_tag(TagVars)          -> iolist()
+    some_tag(TagVars, Options) -> iolist()
 
-The `Context` is specified at render-time with the `custom_tags_context` option.
+The `TagVars` are variables provided to a custom tag in the template's body
+(e.g. `{% foo bar=100 %}` results in `TagVars = [{"bar", 100}]`).
+The `Options` are options passed as the second argument to the `render/2` call
+at render-time. (These may include any options, not just `locale` and
+`translation_fun`.)
 
 * `custom_filters_modules` - A list of modules to be used for handling custom
 filters. The modules will be searched in order and take precedence over the
@@ -102,6 +107,7 @@ Defaults to [].
 * `binary_strings` - Whether to compile strings as binary terms (rather than
 lists). Defaults to `true`.
 
+* `verbose` - Enable verbose printing of compilation results.
 
 Helper compilation
 ------------------
@@ -145,8 +151,6 @@ Val end`
 * `locale` - A string specifying the current locale, for use with the
 `blocktrans_fun` compile-time option.
 
-* `custom_tags_context` - A value that will be passed to custom tags.
-
     my_compiled_template:translatable_strings() -> [String]
 
 List of strings appearing in `{% trans %}` tags that can be overridden with
@@ -169,6 +173,11 @@ List of names/checksums of templates included by the original template
 file. Useful for frameworks that recompile a template only when the
 template's dependencies change.
 
+    my_compiled_template:variables() -> [Variable::atom()]
+
+Sorted list of unique variables used in the template's body. The list can
+be used for determining which variable bindings need to be passed to the
+render/3 function.
 
 Differences from standard Django Template Language
 --------------------------------------------------

@@ -152,13 +152,52 @@
 -define(SECONDS_PER_MONTH, (30 * ?SECONDS_PER_DAY)).
 -define(SECONDS_PER_YEAR, (365 * ?SECONDS_PER_DAY)).
  
-%% @doc Adds a number to the value.
-add(Input, Number) when is_binary(Input) ->
-    list_to_binary(add(binary_to_list(Input), Number));
-add(Input, Number) when is_list(Input) ->
-    integer_to_list(add(list_to_integer(Input), Number));
-add(Input, Number) when is_integer(Input) ->
-    Input + Number.
+%% @doc Adds to values
+add(LHS, RHS) when is_number(LHS), is_number(RHS) ->
+    LHS + RHS;
+add(LHS, RHS) when is_binary(LHS) ->
+    add(binary_to_list(LHS), RHS);
+add(LHS, RHS) when is_binary(RHS) ->
+    add(LHS, binary_to_list(RHS));
+add(LHS, RHS) when is_list(LHS), is_list(RHS) ->
+    case {to_numeric(LHS), to_numeric(RHS)} of
+	{{number, LHSNum}, {number, RHSNum}} ->
+	    LHSNum + RHSNum;
+	_ ->
+	    LHS ++ RHS
+    end;
+add(LHS, RHS) when is_list(LHS), is_number(RHS) ->
+    case to_numeric(LHS) of
+	{number, LHSNum} ->
+	    LHSNum + RHS;
+	_ ->
+	    LHS ++ to_string(RHS)
+    end;
+add(LHS, RHS) when is_number(LHS), is_list(RHS) ->
+    case to_numeric(RHS) of
+	{number, RHSNum} ->
+	    LHS + RHSNum;
+	_ ->
+	    to_string(LHS) ++ RHS
+    end.
+
+to_string(Num) when is_integer(Num) ->
+    integer_to_list(Num);
+to_string(Num) when is_float(Num) ->
+    float_to_list(Num).
+
+to_numeric(List) ->
+    try
+	{number, list_to_integer(List)}
+    catch
+	error:badarg ->
+	    try
+		{number, list_to_float(List)}
+	    catch
+		error:badarg ->
+		    undefined
+	    end
+    end.
  
 %% @doc Adds slashes before quotes.
 addslashes(Input) when is_binary(Input) ->
@@ -218,10 +257,21 @@ default_if_none(undefined, Default) ->
 default_if_none(Input, _) ->
     Input.
 
-%% @doc Takes a list of dictionaries and returns that list sorted by the key given in the argument.
+%% @doc Takes a list of dictionaries or proplists and returns that list sorted by the key given in the argument.
+dictsort(DictList, Key) when is_binary(Key) ->
+    dictsort(DictList, [binary_to_atom(B,latin1) ||
+			   B <- binary:split(Key,<<".">>)]);
 dictsort(DictList, Key) ->
-    case lists:all(fun(Dict) -> dict:is_key(Key, Dict) end, DictList) of
-        true -> lists:sort(fun(K1,K2) -> dict:find(Key,K1) =< dict:find(Key,K2) end, DictList);
+    case lists:all(
+	   fun(Dict) ->
+		   erlydtl_runtime:find_deep_value(Key, Dict) /= undefined
+	   end, DictList) of
+        true ->
+	    lists:sort(
+	      fun(K1,K2) ->
+		      erlydtl_runtime:find_deep_value(Key,K1) =<
+			  erlydtl_runtime:find_deep_value(Key,K2)
+	      end, DictList);
         false -> error
     end.
 
@@ -747,7 +797,7 @@ timeuntil(Date,Comparison) ->
 title(Input) when is_binary(Input) ->
     title(binary_to_list(Input));
 title(Input) when is_list(Input) ->
-    title(Input, []).
+    title(lower(Input), []).
 
 %% @doc Truncates a string after a certain number of characters.
 truncatechars(_Input, Max) when Max =< 0 ->
@@ -979,7 +1029,12 @@ title([], Acc) ->
     lists:reverse(Acc);
 title([Char | Rest], [] = Acc) when Char >= $a, Char =< $z ->
     title(Rest, [Char + ($A - $a) | Acc]);
-title([Char | Rest], [$\  |_] = Acc) when Char >= $a, Char =< $z ->
+title([Char | Rest], [Sep|[Sep2|_Other]] = Acc)
+  when Char >= $a, Char =< $z,
+       not (Sep >= $a andalso Sep =< $z),
+       not (Sep >= $A andalso Sep =< $Z),
+       not (Sep >= $0 andalso Sep =< $9),
+       not (Sep =:= $' andalso (Sep2 >= $a andalso Sep2 =< $z)) ->
     title(Rest, [Char + ($A - $a) | Acc]);
 title([Char | Rest], Acc) ->
     title(Rest, [Char | Acc]).
@@ -988,9 +1043,21 @@ truncatechars([], _CharsLeft, Acc) ->
     lists:reverse(Acc);
 truncatechars(_Input, 0, Acc) ->
     lists:reverse("..." ++ Acc);
+truncatechars([C|Rest], CharsLeft, Acc) when C >= 2#11111100 ->
+    truncatechars(Rest, CharsLeft + 4, [C|Acc]);
+truncatechars([C|Rest], CharsLeft, Acc) when C >= 2#11111000 ->
+    truncatechars(Rest, CharsLeft + 3, [C|Acc]);
+truncatechars([C|Rest], CharsLeft, Acc) when C >= 2#11110000 ->
+    truncatechars(Rest, CharsLeft + 2, [C|Acc]);
+truncatechars([C|Rest], CharsLeft, Acc) when C >= 2#11100000 ->
+    truncatechars(Rest, CharsLeft + 1, [C|Acc]);
+truncatechars([C|Rest], CharsLeft, Acc) when C >= 2#11000000 ->
+    truncatechars(Rest, CharsLeft, [C|Acc]);
 truncatechars([C|Rest], CharsLeft, Acc) ->
     truncatechars(Rest, CharsLeft - 1, [C|Acc]).
 
+truncatewords(Value, _WordsLeft, _Acc) when is_atom(Value) ->
+    Value;
 truncatewords([], _WordsLeft, Acc) ->
     lists:reverse(Acc);
 truncatewords(_Input, 0, Acc) ->
