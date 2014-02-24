@@ -36,6 +36,9 @@
 -author('emmiller@gmail.com').
 -author('drew dot gulino at google dot com').
  
+-ifdef(TEST).
+-undef(TEST).
+-endif.
 -define(TEST,"").
 %-define(NOTEST,1).
 -define(NODEBUG,1).
@@ -63,6 +66,7 @@
         filesizeformat/1,
         first/1,
         fix_ampersands/1,
+        floatformat/1,
         floatformat/2,
         force_escape/1,
         format_integer/1,
@@ -107,6 +111,7 @@
         unordered_list/1,
         upper/1,
         urlencode/1,
+        urlencode/2,
         urlize/1,
         urlize/2,
         urlizetrunc/2,
@@ -234,14 +239,12 @@ date(Input) ->
     date(Input, "F j, Y").
 
 %% @doc Formats a date according to the given format.
-date(Input, FormatStr) when is_binary(Input) ->
-    list_to_binary(date(binary_to_list(Input), FormatStr));
-date({{_,_,_} = Date,{_,_,_} = Time}, FormatStr) ->
-    erlydtl_dateformat:format({Date, Time}, FormatStr);
-date({_,_,_} = Date, FormatStr) ->
-    erlydtl_dateformat:format(Date, FormatStr);
-date(Input, _FormatStr) when is_list(Input) ->
-    io:format("Unexpected date parameter : ~p~n", [Input]),
+date(Input, FormatStr)
+  when is_tuple(Input)
+       andalso (size(Input) == 2 orelse size(Input) == 3) ->
+    erlydtl_dateformat:format(Input, FormatStr);
+date(Input, _FormatStr) ->
+    io:format("Unexpected date parameter: ~p~n", [Input]),
     "".
 
 %% @doc If value evaluates to `false', use given default. Otherwise, use the value.
@@ -293,7 +296,7 @@ divisibleby(Input, Divisor) when is_integer(Input), is_integer(Divisor) ->
 
 %% @doc Escapes characters for use in JavaScript strings.
 escapejs(Input) when is_binary(Input) ->
-    escapejs(binary_to_list(Input));
+    unicode:characters_to_binary(escapejs(unicode:characters_to_list(Input)));
 escapejs(Input) when is_list(Input) ->
     escapejs(Input, []).
 
@@ -325,33 +328,32 @@ fix_ampersands(Input) when is_list(Input) ->
 
 %% @doc When used without an argument, rounds a floating-point number to one decimal place
 %% -- but only if there's a decimal part to be displayed
-floatformat(Number, Place) when is_binary(Number) ->
-    floatformat(binary_to_list(Number), Place);
-floatformat(Number, Place) ->
-    floatformat_io(Number, cast_to_integer(Place)).
+floatformat(Number) ->
+    floatformat(Number, []).
+
+floatformat(Number, Place)
+  when is_number(Number); is_binary(Number); is_list(Number) ->
+    floatformat_io(cast_to_float(Number), cast_to_integer(Place));
+floatformat(_, _) -> "".
 
 floatformat_io(Number, []) ->
     floatformat_io(Number, -1);
+floatformat_io(Number, 0) ->
+    hd(io_lib:format("~B", [erlang:round(Number)]));
 floatformat_io(Number, Precision) when Precision > 0 ->
-    Format = lists:flatten(io_lib:format("~~.~Bf",[Precision])),
-    [Result] = io_lib:format(Format,[Number]),
-    Result;
+    hd(io_lib:format("~.*f",[Precision, Number]));
 floatformat_io(Number, Precision) when Precision < 0 ->   
     Round = erlang:round(Number),
     RoundPrecision = round(Number, -Precision),
-    case RoundPrecision == Round of
-        true ->
-            %Format = lists:flatten(io_lib:format("~~~BB",[-Precision])),
-            [Result] = io_lib:format("~B",[Round]);
-        false ->
-            Format = lists:flatten(io_lib:format("~~.~Bf",[-Precision])),
-            [Result] = io_lib:format(Format,[RoundPrecision])
-    end,
-    Result.
+    if RoundPrecision == Round ->
+            floatformat_io(Round, 0);
+       true ->
+            floatformat_io(RoundPrecision, -Precision)
+    end.
 
 round(Number, Precision) ->
     P = math:pow(10, Precision),
-    round(Number * P) / P.
+    erlang:round(Number * P) / P.
 
 %% @doc Applies HTML escaping to a string.
 force_escape(Input) when is_list(Input) ->
@@ -529,10 +531,8 @@ random(_) ->
     "".
 
 random_num(Value) ->
-    {A1,A2,A3} = now(),
-    random:seed(A1, A2, A3),
-    Rand = random:uniform(Value),
-    Rand.
+    random:seed(now()),
+    random:uniform(Value).
 
 %% random tags to be used when using erlydtl in testing
 random_range(Range) ->
@@ -717,7 +717,19 @@ cast_to_float(Input) when is_float(Input) ->
     Input;
 cast_to_float(Input) when is_integer(Input) ->
     Input + 0.0;
-cast_to_float(Input) ->
+cast_to_float(Input) when is_binary(Input) ->
+    %% be compatible with releases prior to R16B
+    case erlang:function_exported(erlang, binary_to_float, 1) of
+        true ->
+            try erlang:binary_to_float(Input)
+            catch
+                error:_Reason ->
+                    erlang:binary_to_integer(Input) + 0.0
+            end;
+        false ->
+            cast_to_float(binary_to_list(Input))
+    end;
+cast_to_float(Input) when is_list(Input) ->
     try list_to_float(Input)
     catch
         error:_Reason ->
@@ -739,6 +751,11 @@ cast_to_integer(Input) when is_list(Input)->
         false ->       
             erlang:list_to_integer(Input)
     end.
+
+cast_to_list(Input) when is_list(Input) -> Input;
+cast_to_list(Input) when is_binary(Input) -> binary_to_list(Input);
+cast_to_list(Input) when is_atom(Input) -> atom_to_list(Input);
+cast_to_list(Input) -> hd(io_lib:format("~p", [Input])).
 
 %% @doc Converts to lowercase, removes non-word characters (alphanumerics and underscores) and converts spaces to hyphens.
 slugify(Input) when is_binary(Input) ->
@@ -800,28 +817,16 @@ title(Input) when is_list(Input) ->
     title(lower(Input), []).
 
 %% @doc Truncates a string after a certain number of characters.
-truncatechars(_Input, Max) when Max =< 0 ->
-    "";
-truncatechars(Input, Max) when is_binary(Input) ->
-    list_to_binary(truncatechars(binary_to_list(Input), Max));
 truncatechars(Input, Max) ->
-    truncatechars(Input, Max, []).
+    truncatechars_io(cast_to_list(Input), Max, []).
 
 %% @doc Truncates a string after a certain number of words.
-truncatewords(_Input, Max) when Max =< 0 ->
-    "";
-truncatewords(Input, Max) when is_binary(Input) ->
-    list_to_binary(truncatewords(binary_to_list(Input), Max));
 truncatewords(Input, Max) ->
-    truncatewords(Input, Max, []).
+    truncatewords_io(cast_to_list(Input), Max, []).
 
 %% @doc Similar to truncatewords, except that it is aware of HTML tags.
-truncatewords_html(_Input, Max) when Max =< 0 ->
-    "";
-truncatewords_html(Input, Max) when is_binary(Input) ->
-    truncatewords_html(binary_to_list(Input), Max);
 truncatewords_html(Input, Max) ->
-    truncatewords_html(Input, Max, [], [], text).
+    truncatewords_html_io(cast_to_list(Input), Max, [], [], text).
 
 %% @doc Recursively takes a self-nested list and returns an HTML unordered list -- WITHOUT opening and closing `<ul>' tags. 
 unordered_list(List) ->
@@ -846,10 +851,13 @@ upper(Input) ->
     string:to_upper(Input).
 
 %% @doc Escapes a value for use in a URL.
-urlencode(Input) when is_binary(Input) ->
-    urlencode(Input, 0);
-urlencode(Input) when is_list(Input) ->
-    urlencode(Input, []).
+urlencode(Input) ->
+    urlencode(Input, <<"/">>).
+
+urlencode(Input, Safe) when is_binary(Input) ->
+    urlencode_io(Input, Safe, 0);
+urlencode(Input, Safe) when is_list(Input) ->
+    urlencode_io(Input, Safe, []).
 
 %% @doc Returns the number of words.
 wordcount(Input) when is_binary(Input) ->
@@ -864,12 +872,10 @@ wordwrap(Input, Number) when is_list(Input) ->
     wordwrap(Input, [], [], 0, Number).
 
 %% @doc Given a string mapping values for true, false and (optionally) undefined, returns one of those strings according to the value.
-yesno(Bool, Choices) when is_binary(Bool) ->
-    yesno_io(binary_to_list(Bool), Choices);
 yesno(Bool, Choices) when is_binary(Choices) ->
-    yesno_io(Bool, binary_to_list(Choices));
+    yesno_io(Bool, Choices);
 yesno(Bool, Choices) when is_list(Choices) ->
-    yesno_io(Bool, Choices).
+    yesno_io(Bool, list_to_binary(Choices)).
 
 % internal
 
@@ -916,6 +922,8 @@ escape("\"" ++ Rest, Acc) ->
     escape(Rest, lists:reverse("&quot;", Acc));
 escape("'" ++ Rest, Acc) ->
     escape(Rest, lists:reverse("&#039;", Acc));
+escape([S | Rest], Acc) when is_list(S); is_binary(S)->
+    escape(Rest, [force_escape(S) | Acc]);
 escape([C | Rest], Acc) ->
     escape(Rest, [C | Acc]).
 
@@ -1039,62 +1047,76 @@ title([Char | Rest], [Sep|[Sep2|_Other]] = Acc)
 title([Char | Rest], Acc) ->
     title(Rest, [Char | Acc]).
 
-truncatechars([], _CharsLeft, Acc) ->
+truncatechars_io([], _CharsLeft, Acc) ->
     lists:reverse(Acc);
-truncatechars(_Input, 0, Acc) ->
-    lists:reverse("..." ++ Acc);
-truncatechars([C|Rest], CharsLeft, Acc) when C >= 2#11111100 ->
-    truncatechars(Rest, CharsLeft + 4, [C|Acc]);
-truncatechars([C|Rest], CharsLeft, Acc) when C >= 2#11111000 ->
-    truncatechars(Rest, CharsLeft + 3, [C|Acc]);
-truncatechars([C|Rest], CharsLeft, Acc) when C >= 2#11110000 ->
-    truncatechars(Rest, CharsLeft + 2, [C|Acc]);
-truncatechars([C|Rest], CharsLeft, Acc) when C >= 2#11100000 ->
-    truncatechars(Rest, CharsLeft + 1, [C|Acc]);
-truncatechars([C|Rest], CharsLeft, Acc) when C >= 2#11000000 ->
-    truncatechars(Rest, CharsLeft, [C|Acc]);
-truncatechars([C|Rest], CharsLeft, Acc) ->
-    truncatechars(Rest, CharsLeft - 1, [C|Acc]).
+truncatechars_io(_Input, 0, Acc) ->
+    lists:reverse("..." ++ drop_chars(Acc, 3));
+truncatechars_io([C|Rest], CharsLeft, Acc) when C >= 2#11111100 ->
+    truncatechars_io(Rest, CharsLeft + 4, [C|Acc]);
+truncatechars_io([C|Rest], CharsLeft, Acc) when C >= 2#11111000 ->
+    truncatechars_io(Rest, CharsLeft + 3, [C|Acc]);
+truncatechars_io([C|Rest], CharsLeft, Acc) when C >= 2#11110000 ->
+    truncatechars_io(Rest, CharsLeft + 2, [C|Acc]);
+truncatechars_io([C|Rest], CharsLeft, Acc) when C >= 2#11100000 ->
+    truncatechars_io(Rest, CharsLeft + 1, [C|Acc]);
+truncatechars_io([C|Rest], CharsLeft, Acc) when C >= 2#11000000 ->
+    truncatechars_io(Rest, CharsLeft, [C|Acc]);
+truncatechars_io([C|Rest], CharsLeft, Acc) ->
+    truncatechars_io(Rest, CharsLeft - 1, [C|Acc]).
 
-truncatewords(Value, _WordsLeft, _Acc) when is_atom(Value) ->
-    Value;
-truncatewords([], _WordsLeft, Acc) ->
-    lists:reverse(Acc);
-truncatewords(_Input, 0, Acc) ->
-    lists:reverse("..." ++ Acc);
-truncatewords([C1, C2|Rest], WordsLeft, Acc) when C1 =/= $\  andalso C2 =:= $\  ->
-    truncatewords([C2|Rest], WordsLeft - 1, [C1|Acc]);
-truncatewords([C1|Rest], WordsLeft, Acc) ->
-    truncatewords(Rest, WordsLeft, [C1|Acc]).
+drop_chars([], _) -> [];
+drop_chars(Cs, 0) -> Cs;
+drop_chars([C|Cs], Count) when C >= 2#11111100 ->
+    drop_chars(Cs, Count + 4);
+drop_chars([C|Cs], Count) when C >= 2#11111000 ->
+    drop_chars(Cs, Count + 3);
+drop_chars([C|Cs], Count) when C >= 2#11110000 ->
+    drop_chars(Cs, Count + 2);
+drop_chars([C|Cs], Count) when C >= 2#11100000 ->
+    drop_chars(Cs, Count + 1);
+drop_chars([C|Cs], Count) when C >= 2#11000000 ->
+    drop_chars(Cs, Count);
+drop_chars([_|Cs], Count) ->
+    drop_chars(Cs, Count - 1).
 
-truncatewords_html([], _WordsLeft, Acc, [], _) ->
+
+truncatewords_io([], _WordsLeft, Acc) ->
     lists:reverse(Acc);
-truncatewords_html(_Input, 0, Acc, [], _) ->
+truncatewords_io(_Input, 0, Acc) ->
+    lists:reverse("... " ++ Acc);
+truncatewords_io([C1, C2|Rest], WordsLeft, Acc) when C1 =/= $\s andalso C2 =:= $\s ->
+    truncatewords_io([C2|Rest], WordsLeft - 1, [C1|Acc]);
+truncatewords_io([C1|Rest], WordsLeft, Acc) ->
+    truncatewords_io(Rest, WordsLeft, [C1|Acc]).
+
+truncatewords_html_io([], _WordsLeft, Acc, [], _) ->
     lists:reverse(Acc);
-truncatewords_html(Input, 0, Acc, [Tag|RestOfTags], done) ->
-    truncatewords_html(Input, 0, ">"++Tag++"/<" ++ Acc, RestOfTags, done);
-truncatewords_html(Input, 0, Acc, [Tag|RestOfTags], _) ->
-    truncatewords_html(Input, 0, "...>"++Tag++"/<" ++ Acc, RestOfTags, done);
-truncatewords_html([], WordsLeft, Acc, [Tag|RestOfTags], _) ->
-    truncatewords_html([], WordsLeft, ">"++Tag++"/<" ++ Acc, RestOfTags, text);
-truncatewords_html([C|Rest], WordsLeft, Acc, Tags, text) when C =:= $< ->
-    truncatewords_html(Rest, WordsLeft, [C|Acc], [""|Tags], tag);
-truncatewords_html([C1, C2|Rest], WordsLeft, Acc, Tags, text) when C1 =/= $\ , C2 =:= $\ ; C1 =/= $\ , C2 =:= $< ->
-    truncatewords_html([C2|Rest], WordsLeft - 1, [C1|Acc], Tags, text);
-truncatewords_html([C|Rest], WordsLeft, Acc, Tags, text) ->
-    truncatewords_html(Rest, WordsLeft, [C|Acc], Tags, text);
-truncatewords_html([C|Rest], WordsLeft, Acc, [""|Tags], tag) when C =:= $/ ->
-    truncatewords_html(Rest, WordsLeft, [C|Acc], Tags, close_tag);
-truncatewords_html([C|Rest], WordsLeft, Acc, [Tag|RestOfTags], tag) when C >= $a, C =< $z; C >= $A, C =< $Z ->
-    truncatewords_html(Rest, WordsLeft, [C|Acc], [[C|Tag]|RestOfTags], tag);
-truncatewords_html([C|Rest], WordsLeft, Acc, Tags, tag) when C =:= $> ->
-    truncatewords_html(Rest, WordsLeft, [C|Acc], Tags, text);
-truncatewords_html([C|Rest], WordsLeft, Acc, Tags, tag) ->
-    truncatewords_html(Rest, WordsLeft, [C|Acc], Tags, attrs);
-truncatewords_html([C|Rest], WordsLeft, Acc, Tags, attrs) when C =:= $> ->
-    truncatewords_html(Rest, WordsLeft, [C|Acc], Tags, text);
-truncatewords_html([C|Rest], WordsLeft, Acc, [_Tag|RestOfTags], close_tag) when C =:= $> ->
-    truncatewords_html(Rest, WordsLeft, [C|Acc], RestOfTags, text).
+truncatewords_html_io(_Input, 0, Acc, [], _) ->
+    lists:reverse(Acc);
+truncatewords_html_io(Input, 0, Acc, [Tag|RestOfTags], done) ->
+    truncatewords_html_io(Input, 0, ">"++Tag++"/<" ++ Acc, RestOfTags, done);
+truncatewords_html_io(Input, 0, Acc, [Tag|RestOfTags], _) ->
+    truncatewords_html_io(Input, 0, "...>"++Tag++"/<" ++ Acc, RestOfTags, done);
+truncatewords_html_io([], WordsLeft, Acc, [Tag|RestOfTags], _) ->
+    truncatewords_html_io([], WordsLeft, ">"++Tag++"/<" ++ Acc, RestOfTags, text);
+truncatewords_html_io([C|Rest], WordsLeft, Acc, Tags, text) when C =:= $< ->
+    truncatewords_html_io(Rest, WordsLeft, [C|Acc], [""|Tags], tag);
+truncatewords_html_io([C1, C2|Rest], WordsLeft, Acc, Tags, text) when C1 =/= $\ , C2 =:= $\ ; C1 =/= $\ , C2 =:= $< ->
+    truncatewords_html_io([C2|Rest], WordsLeft - 1, [C1|Acc], Tags, text);
+truncatewords_html_io([C|Rest], WordsLeft, Acc, Tags, text) ->
+    truncatewords_html_io(Rest, WordsLeft, [C|Acc], Tags, text);
+truncatewords_html_io([C|Rest], WordsLeft, Acc, [""|Tags], tag) when C =:= $/ ->
+    truncatewords_html_io(Rest, WordsLeft, [C|Acc], Tags, close_tag);
+truncatewords_html_io([C|Rest], WordsLeft, Acc, [Tag|RestOfTags], tag) when C >= $a, C =< $z; C >= $A, C =< $Z ->
+    truncatewords_html_io(Rest, WordsLeft, [C|Acc], [[C|Tag]|RestOfTags], tag);
+truncatewords_html_io([C|Rest], WordsLeft, Acc, Tags, tag) when C =:= $> ->
+    truncatewords_html_io(Rest, WordsLeft, [C|Acc], Tags, text);
+truncatewords_html_io([C|Rest], WordsLeft, Acc, Tags, tag) ->
+    truncatewords_html_io(Rest, WordsLeft, [C|Acc], Tags, attrs);
+truncatewords_html_io([C|Rest], WordsLeft, Acc, Tags, attrs) when C =:= $> ->
+    truncatewords_html_io(Rest, WordsLeft, [C|Acc], Tags, text);
+truncatewords_html_io([C|Rest], WordsLeft, Acc, [_Tag|RestOfTags], close_tag) when C =:= $> ->
+    truncatewords_html_io(Rest, WordsLeft, [C|Acc], RestOfTags, text).
 
 wordcount([], Count) ->
     Count;
@@ -1126,31 +1148,33 @@ wordwrap([C | Rest], Acc, WordAcc, LineLength, WrapAt) when erlang:length(WordAc
 wordwrap([C | Rest], Acc, WordAcc, LineLength, WrapAt) ->
     wordwrap(Rest, Acc, [C | WordAcc], LineLength, WrapAt).
 
-% Taken from quote_plus of mochiweb_util
-
-urlencode(Input, Index) when is_binary(Input) ->
+urlencode_io(Input, Safe, Index) when is_binary(Input) ->
     case Input of
         <<_:Index/binary, Byte, _/binary>> when ?NO_ENCODE(Byte) ->
-            urlencode(Input, Index + 1);
-        <<Pre:Index/binary, $\s, Post/binary>> ->
-            process_binary_match(Pre, <<"+">>, size(Post), urlencode(Post, 0));
-        <<Pre:Index/binary, Hi:4, Lo:4, Post/binary>> ->
-            HiDigit = hexdigit(Hi),
-            LoDigit = hexdigit(Lo),
-            Code = <<$\%, HiDigit, LoDigit>>,
-            process_binary_match(Pre, Code, size(Post), urlencode(Post, 0));
+            urlencode_io(Input, Safe, Index + 1);
+        <<Pre:Index/binary, C:1/binary, Post/binary>> ->
+            process_binary_match(
+              Pre, maybe_urlencode_char(C, Safe),
+              size(Post), urlencode_io(Post, Safe, 0));
         Input ->
             Input
     end;
-urlencode([], Acc) ->
+urlencode_io([], _Safe, Acc) ->
     lists:reverse(Acc);
-urlencode([C | Rest], Acc) when ?NO_ENCODE(C) ->
-    urlencode(Rest, [C | Acc]);
-urlencode([$\s | Rest], Acc) ->
-    urlencode(Rest, [$+ | Acc]);
-urlencode([C | Rest], Acc) ->
-    <<Hi:4, Lo:4>> = <<C>>,
-    urlencode(Rest, [hexdigit(Lo), hexdigit(Hi), $\% | Acc]).
+urlencode_io([C | Rest], Safe, Acc) when ?NO_ENCODE(C) ->
+    urlencode_io(Rest, Safe, [C | Acc]);
+urlencode_io([C | Rest], Safe, Acc) ->
+    urlencode_io(Rest, Safe, [maybe_urlencode_char(<<C>>, Safe) | Acc]).
+
+maybe_urlencode_char(C, Safe) ->
+    case binary:match(Safe, C) of
+        nomatch ->
+            <<Hi:4, Lo:4>> = C,
+            HiDigit = hexdigit(Hi),
+            LoDigit = hexdigit(Lo),
+            <<$%, HiDigit, LoDigit>>;
+        _ -> C
+    end.
 
 %% @doc Converts URLs in text into clickable links.
 %%TODO: Autoescape not yet implemented
@@ -1208,20 +1232,21 @@ process_binary_match(Pre, Insertion, SizePost, Post) ->
         _ -> [Pre, Insertion, Post]
     end.
 
-yesno_io(Bool, Choices) ->
-    %%       io:format("Bool, Choices: ~p, ~p ~n",[Bool, Choices]),
-    Terms = string:tokens(Choices, ","),
-    case Bool of
-        true ->
-            lists:nth(1, Terms);
-        false ->
-            lists:nth(2, Terms);
-        undefined when erlang:length(Terms) == 2 -> % (converts undefined to false if no mapping for undefined is given)
-            lists:nth(2, Terms);
-        undefined when erlang:length(Terms) == 3 ->
-            lists:nth(3, Terms);
-        _ ->
-            error
+yesno_io(Val, Choices) ->
+    {True, False, Undefined} =
+        case binary:split(Choices, <<",">>, [global]) of
+            [T, F, U] -> {T, F, U};
+            [T, F] -> {T, F, F};
+            _ -> throw({yesno, choices})
+        end,
+    if Val =:= false -> False;
+       Val =:= undefined -> Undefined;
+           is_list(Val); is_binary(Val) ->
+                case iolist_size(Val) of
+                    0 -> False;
+                    _ -> True
+                end;
+       true -> True
     end.
 
 %% unjoin == split in other languages; inverse of join

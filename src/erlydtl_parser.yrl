@@ -1,4 +1,4 @@
-%%%-------------------------------------------------------------------
+%%% -*- mode: erlang -*- ------------------------------------------------------------------
 %%% File:      erlydtl_parser.erl
 %%% @author    Roberto Saccon <rsaccon@gmail.com> [http://rsaccon.com]
 %%% @author    Evan Miller <emmiller@gmail.com>
@@ -42,7 +42,8 @@ Nonterminals
     Values
     Variable
     Filter
-    
+    FilterArg
+
     AutoEscapeBlock
     AutoEscapeBraced
     EndAutoEscapeBraced
@@ -100,6 +101,7 @@ Nonterminals
     EndIfNotEqualBraced      
 
     CustomTag
+    CustomArgs
     Args
 
     RegroupBlock
@@ -111,6 +113,7 @@ Nonterminals
     SSITag
 
     BlockTransBlock
+    BlockTransContent
     TransTag    
 
     TemplatetagTag
@@ -176,6 +179,7 @@ Terminals
     open_var
     parsed_keyword
     regroup_keyword
+    reversed_keyword
     spaceless_keyword
     ssi_keyword
     string_literal
@@ -245,10 +249,20 @@ Value -> Variable : '$1'.
 Value -> Literal : '$1'.
 
 Values -> Value : ['$1'].
-Values -> Values Value : '$1' ++ ['$2'].
+Values -> Value Values : ['$1'|'$2'].
+
+Filter -> identifier FilterArg : {'$1', '$2'}.
+
+FilterArg -> '$empty' : [].
+FilterArg -> ':' Variable : ['$2'].
+FilterArg -> ':' Literal : ['$2'].
 
 Variable -> identifier : {variable, '$1'}.
 Variable -> Variable '.' identifier : {attribute, {'$3', '$1'}}.
+Variable -> Variable '.' Literal : {attribute, {'$3', '$1'}}.
+
+Literal -> string_literal : '$1'.
+Literal -> number_literal : '$1'.
 
 AutoEscapeBlock -> AutoEscapeBraced Elements EndAutoEscapeBraced : {autoescape, '$1', '$2'}.
 AutoEscapeBraced -> open_tag autoescape_keyword identifier close_tag : '$3'.
@@ -286,7 +300,7 @@ FilterBraced -> open_tag filter_keyword Filters close_tag : '$3'.
 EndFilterBraced -> open_tag endfilter_keyword close_tag.
 
 Filters -> Filter : ['$1'].
-Filters -> Filters '|' Filter : '$1' ++ ['$3'].
+Filters -> Filter '|' Filters : ['$1'|'$3'].
 
 FirstofTag -> open_tag firstof_keyword Values close_tag : {firstof, '$3'}.
 
@@ -295,7 +309,8 @@ ForBlock -> ForBraced Elements EmptyBraced Elements EndForBraced : {for, '$1', '
 EmptyBraced -> open_tag empty_keyword close_tag.
 ForBraced -> open_tag for_keyword ForExpression close_tag : '$3'.
 EndForBraced -> open_tag endfor_keyword close_tag.
-ForExpression -> ForGroup in_keyword Variable : {'in', '$1', '$3'}.
+ForExpression -> ForGroup in_keyword Value : {'in', '$1', '$3', false}.
+ForExpression -> ForGroup in_keyword Value reversed_keyword : {'in', '$1', '$3', true}.
 ForGroup -> identifier : ['$1'].
 ForGroup -> ForGroup ',' identifier : '$1' ++ ['$3'].
 
@@ -353,8 +368,12 @@ SpacelessBlock -> open_tag spaceless_keyword close_tag Elements open_tag endspac
 SSITag -> open_tag ssi_keyword Value close_tag : {ssi, '$3'}.
 SSITag -> open_tag ssi_keyword string_literal parsed_keyword close_tag : {ssi_parsed, '$3'}.
 
-BlockTransBlock -> open_tag blocktrans_keyword close_tag Elements open_tag endblocktrans_keyword close_tag : {blocktrans, [], '$4'}.
-BlockTransBlock -> open_tag blocktrans_keyword with_keyword Args close_tag Elements open_tag endblocktrans_keyword close_tag : {blocktrans, '$4', '$6'}.
+BlockTransBlock -> open_tag blocktrans_keyword close_tag BlockTransContent open_tag endblocktrans_keyword close_tag : {blocktrans, [], '$4'}.
+BlockTransBlock -> open_tag blocktrans_keyword with_keyword Args close_tag BlockTransContent open_tag endblocktrans_keyword close_tag : {blocktrans, '$4', '$6'}.
+BlockTransContent -> '$empty' : [].
+BlockTransContent -> BlockTransContent open_var identifier close_var : '$1' ++ [{variable, '$3'}].
+BlockTransContent -> BlockTransContent string : '$1' ++ ['$2'].
+%% TODO: {% plural %}
 
 TemplatetagTag -> open_tag templatetag_keyword Templatetag close_tag : {templatetag, '$3'}.
 
@@ -378,14 +397,11 @@ WithBlock -> WithBraced Elements EndWithBraced : {with, '$1', '$2'}.
 WithBraced -> open_tag with_keyword Args close_tag : '$3'.
 EndWithBraced -> open_tag endwith_keyword close_tag.
 
-Filter -> identifier : ['$1'].
-Filter -> identifier ':' Literal : ['$1', '$3'].
-Filter -> identifier ':' Variable : ['$1', '$3'].
+CustomTag -> open_tag identifier CustomArgs close_tag : {tag, '$2', '$3'}.
 
-Literal -> string_literal : '$1'.
-Literal -> number_literal : '$1'.
-
-CustomTag -> open_tag identifier Args close_tag : {tag, '$2', '$3'}.
+CustomArgs -> '$empty' : [].
+CustomArgs -> identifier '=' Value CustomArgs : [{'$1', '$3'}|'$4'].
+CustomArgs -> Value CustomArgs : ['$1'|'$2'].
 
 Args -> '$empty' : [].
 Args -> Args identifier '=' Value : '$1' ++ [{'$2', '$4'}].
