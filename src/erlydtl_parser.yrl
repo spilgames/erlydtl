@@ -1,4 +1,4 @@
-%%%-------------------------------------------------------------------
+%%% -*- mode: erlang -*- ------------------------------------------------------------------
 %%% File:      erlydtl_parser.erl
 %%% @author    Roberto Saccon <rsaccon@gmail.com> [http://rsaccon.com]
 %%% @author    Evan Miller <emmiller@gmail.com>
@@ -42,7 +42,8 @@ Nonterminals
     Values
     Variable
     Filter
-    
+    FilterArg
+
     AutoEscapeBlock
     AutoEscapeBraced
     EndAutoEscapeBraced
@@ -51,6 +52,7 @@ Nonterminals
     BlockBraced
     EndBlockBraced
 
+    CommentInline
     CommentBlock
     CommentBraced
     EndCommentBraced
@@ -100,18 +102,19 @@ Nonterminals
     EndIfNotEqualBraced      
 
     CustomTag
+    CustomArgs
     Args
 
-    RegroupBlock
-    RegroupBraced
-    EndRegroupBraced
+    RegroupTag
 
     SpacelessBlock
 
     SSITag
 
     BlockTransBlock
+    BlockTransContent
     TransTag    
+    TransText
 
     TemplatetagTag
     Templatetag
@@ -124,7 +127,10 @@ Nonterminals
 
     CallTag
     CallWithTag
-    
+
+    LoadTag
+    LoadArgs
+
     Unot.
 
 Terminals
@@ -137,6 +143,7 @@ Terminals
     call_keyword
     close_tag
     close_var
+    comment_inline
     comment_keyword
     cycle_keyword
     elif_keyword
@@ -159,6 +166,7 @@ Terminals
     filter_keyword
     firstof_keyword
     for_keyword
+    from_keyword
     identifier
     if_keyword
     ifchanged_keyword
@@ -166,6 +174,7 @@ Terminals
     ifnotequal_keyword
     in_keyword
     include_keyword
+    load_keyword
     noop_keyword
     not_keyword
     now_keyword
@@ -176,6 +185,7 @@ Terminals
     open_var
     parsed_keyword
     regroup_keyword
+    reversed_keyword
     spaceless_keyword
     ssi_keyword
     string_literal
@@ -216,6 +226,7 @@ Elements -> Elements BlockTransBlock : '$1' ++ ['$2'].
 Elements -> Elements CallTag : '$1' ++ ['$2'].
 Elements -> Elements CallWithTag : '$1' ++ ['$2'].
 Elements -> Elements CommentBlock : '$1' ++ ['$2'].
+Elements -> Elements CommentInline : '$1' ++ ['$2'].
 Elements -> Elements CustomTag : '$1' ++ ['$2'].
 Elements -> Elements CycleTag : '$1' ++ ['$2'].
 Elements -> Elements ExtendsTag : '$1' ++ ['$2'].
@@ -227,8 +238,9 @@ Elements -> Elements IfEqualBlock : '$1' ++ ['$2'].
 Elements -> Elements IfNotEqualBlock : '$1' ++ ['$2'].
 Elements -> Elements IfChangedBlock : '$1' ++ ['$2'].
 Elements -> Elements IncludeTag : '$1' ++ ['$2'].
+Elements -> Elements LoadTag : '$1' ++ ['$2'].
 Elements -> Elements NowTag : '$1' ++ ['$2'].
-Elements -> Elements RegroupBlock : '$1' ++ ['$2'].
+Elements -> Elements RegroupTag : '$1' ++ ['$2'].
 Elements -> Elements SpacelessBlock : '$1' ++ ['$2'].
 Elements -> Elements SSITag : '$1' ++ ['$2'].
 Elements -> Elements TemplatetagTag : '$1' ++ ['$2'].
@@ -245,10 +257,20 @@ Value -> Variable : '$1'.
 Value -> Literal : '$1'.
 
 Values -> Value : ['$1'].
-Values -> Values Value : '$1' ++ ['$2'].
+Values -> Value Values : ['$1'|'$2'].
+
+Filter -> identifier FilterArg : {'$1', '$2'}.
+
+FilterArg -> '$empty' : [].
+FilterArg -> ':' Variable : ['$2'].
+FilterArg -> ':' Literal : ['$2'].
 
 Variable -> identifier : {variable, '$1'}.
 Variable -> Variable '.' identifier : {attribute, {'$3', '$1'}}.
+Variable -> Variable '.' Literal : {attribute, {'$3', '$1'}}.
+
+Literal -> string_literal : '$1'.
+Literal -> number_literal : '$1'.
 
 AutoEscapeBlock -> AutoEscapeBraced Elements EndAutoEscapeBraced : {autoescape, '$1', '$2'}.
 AutoEscapeBraced -> open_tag autoescape_keyword identifier close_tag : '$3'.
@@ -265,11 +287,19 @@ IncludeTag -> open_tag include_keyword string_literal with_keyword Args close_ta
 IncludeTag -> open_tag include_keyword string_literal only_keyword close_tag : {include_only, '$3', []}.
 IncludeTag -> open_tag include_keyword string_literal with_keyword Args only_keyword close_tag : {include_only, '$3', '$5'}.
 
+LoadTag -> open_tag load_keyword LoadArgs close_tag : {load_libs, '$3'}.
+LoadTag -> open_tag load_keyword LoadArgs from_keyword identifier close_tag : {load_from_lib, '$3', '$5'}.
+
+LoadArgs -> '$empty' : [].
+LoadArgs -> identifier LoadArgs : ['$1'|'$2'].
+
 NowTag -> open_tag now_keyword string_literal close_tag : {date, now, '$3'}.
 
 CommentBlock -> CommentBraced Elements EndCommentBraced : {comment, '$2'}.
 CommentBraced -> open_tag comment_keyword close_tag.
 EndCommentBraced -> open_tag endcomment_keyword close_tag.
+
+CommentInline -> comment_inline : {comment, inline_comment_to_string('$1')}.
 
 CycleTag -> open_tag cycle_keyword CycleNamesCompat close_tag : {cycle_compat, '$3'}.
 CycleTag -> open_tag cycle_keyword CycleNames close_tag : {cycle, '$3'}.
@@ -286,7 +316,7 @@ FilterBraced -> open_tag filter_keyword Filters close_tag : '$3'.
 EndFilterBraced -> open_tag endfilter_keyword close_tag.
 
 Filters -> Filter : ['$1'].
-Filters -> Filters '|' Filter : '$1' ++ ['$3'].
+Filters -> Filter '|' Filters : ['$1'|'$3'].
 
 FirstofTag -> open_tag firstof_keyword Values close_tag : {firstof, '$3'}.
 
@@ -295,7 +325,8 @@ ForBlock -> ForBraced Elements EmptyBraced Elements EndForBraced : {for, '$1', '
 EmptyBraced -> open_tag empty_keyword close_tag.
 ForBraced -> open_tag for_keyword ForExpression close_tag : '$3'.
 EndForBraced -> open_tag endfor_keyword close_tag.
-ForExpression -> ForGroup in_keyword Variable : {'in', '$1', '$3'}.
+ForExpression -> ForGroup in_keyword Value : {'in', '$1', '$3', false}.
+ForExpression -> ForGroup in_keyword Value reversed_keyword : {'in', '$1', '$3', true}.
 ForGroup -> identifier : ['$1'].
 ForGroup -> ForGroup ',' identifier : '$1' ++ ['$3'].
 
@@ -344,17 +375,20 @@ IfNotEqualBraced -> open_tag ifnotequal_keyword IfNotEqualExpression Value close
 IfNotEqualExpression -> Value : '$1'.
 EndIfNotEqualBraced -> open_tag endifnotequal_keyword close_tag.
 
-RegroupBlock -> RegroupBraced Elements EndRegroupBraced : {regroup, '$1', '$2'}.
-RegroupBraced -> open_tag regroup_keyword Value by_keyword Value as_keyword identifier close_tag : {'$3', '$5', '$7'}.
-EndRegroupBraced -> open_tag endregroup_keyword close_tag.
+RegroupTag -> open_tag regroup_keyword Value by_keyword Value as_keyword identifier close_tag : {regroup, {'$3', '$5', '$7'}}.
+RegroupTag -> open_tag endregroup_keyword close_tag : end_regroup.
 
 SpacelessBlock -> open_tag spaceless_keyword close_tag Elements open_tag endspaceless_keyword close_tag : {spaceless, '$4'}.
 
 SSITag -> open_tag ssi_keyword Value close_tag : {ssi, '$3'}.
 SSITag -> open_tag ssi_keyword string_literal parsed_keyword close_tag : {ssi_parsed, '$3'}.
 
-BlockTransBlock -> open_tag blocktrans_keyword close_tag Elements open_tag endblocktrans_keyword close_tag : {blocktrans, [], '$4'}.
-BlockTransBlock -> open_tag blocktrans_keyword with_keyword Args close_tag Elements open_tag endblocktrans_keyword close_tag : {blocktrans, '$4', '$6'}.
+BlockTransBlock -> open_tag blocktrans_keyword close_tag BlockTransContent open_tag endblocktrans_keyword close_tag : {blocktrans, [], '$4'}.
+BlockTransBlock -> open_tag blocktrans_keyword with_keyword Args close_tag BlockTransContent open_tag endblocktrans_keyword close_tag : {blocktrans, '$4', '$6'}.
+BlockTransContent -> '$empty' : [].
+BlockTransContent -> BlockTransContent open_var identifier close_var : '$1' ++ [{variable, '$3'}].
+BlockTransContent -> BlockTransContent string : '$1' ++ ['$2'].
+%% TODO: {% plural %}
 
 TemplatetagTag -> open_tag templatetag_keyword Templatetag close_tag : {templatetag, '$3'}.
 
@@ -367,10 +401,12 @@ Templatetag -> closebrace_keyword : '$1'.
 Templatetag -> opencomment_keyword : '$1'.
 Templatetag -> closecomment_keyword : '$1'.
 
-TransTag -> open_tag trans_keyword string_literal close_tag : {trans, '$3'}.
-TransTag -> open_tag trans_keyword Variable close_tag : {trans, '$3'}.
-TransTag -> open_tag trans_keyword string_literal noop_keyword close_tag : '$3'.
-TransTag -> open_tag trans_keyword Variable noop_keyword close_tag : '$3'.
+TransTag -> open_tag trans_keyword TransText close_tag : {trans, '$3'}.
+TransTag -> open_tag trans_keyword TransText as_keyword identifier close_tag : {scope_as, '$5', [{trans, '$3'}]}.
+TransTag -> open_tag trans_keyword TransText noop_keyword close_tag : '$3'.
+
+TransText -> string_literal : '$1'.
+TransText -> Variable : '$1'.
 
 WidthRatioTag -> open_tag widthratio_keyword Value Value number_literal close_tag : {widthratio, '$3', '$4', '$5'}.
 
@@ -378,19 +414,22 @@ WithBlock -> WithBraced Elements EndWithBraced : {with, '$1', '$2'}.
 WithBraced -> open_tag with_keyword Args close_tag : '$3'.
 EndWithBraced -> open_tag endwith_keyword close_tag.
 
-Filter -> identifier : ['$1'].
-Filter -> identifier ':' Literal : ['$1', '$3'].
-Filter -> identifier ':' Variable : ['$1', '$3'].
+CustomTag -> open_tag identifier CustomArgs close_tag : {tag, '$2', '$3'}.
 
-Literal -> string_literal : '$1'.
-Literal -> number_literal : '$1'.
-
-CustomTag -> open_tag identifier Args close_tag : {tag, '$2', '$3'}.
+CustomArgs -> '$empty' : [].
+CustomArgs -> identifier '=' Value CustomArgs : [{'$1', '$3'}|'$4'].
+CustomArgs -> Value CustomArgs : ['$1'|'$2'].
 
 Args -> '$empty' : [].
 Args -> Args identifier '=' Value : '$1' ++ [{'$2', '$4'}].
 
 CallTag -> open_tag call_keyword identifier close_tag : {call, '$3'}.
 CallWithTag -> open_tag call_keyword identifier with_keyword Value close_tag : {call, '$3', '$5'}.
+
+Erlang code.
+
+inline_comment_to_string({comment_inline, Pos, S}) ->
+    %% inline comment converted to block comment for simplicity
+    [{string, Pos, S}].
 
 %% vim: syntax=erlang

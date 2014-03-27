@@ -5,3 +5,10 @@ ebin
 erl_crash.dump
 examples/rendered_output
 src/erlydtl_parser.erl
+*~
+ebintest
+tests/src/erlydtl_extension_testparser.erl
+tests/output
+deps
+.emacs*
+.eunit

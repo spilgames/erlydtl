@@ -2,9 +2,22 @@
 
 -compile(export_all).
 
+-type translate_fun() :: fun((string() | binary()) -> string() | binary() | undefined).
+
 -define(IFCHANGED_CONTEXT_VARIABLE, erlydtl_ifchanged_context).
 
-find_value(Key, Data, _, _) ->
+find_value(Key, Data, Options) when is_atom(Key), is_tuple(Data) ->
+    Rec = element(1, Data),
+    Info = proplists:get_value(record_info, Options),
+    case proplists:get_value(Rec, Info) of
+        Fields when is_list(Fields), length(Fields) == size(Data) - 1 ->
+            case proplists:get_value(Key, Fields) of
+                Idx when is_integer(Idx) -> element(Idx, Data);
+                _ -> undefined
+            end;
+        _ -> find_value(Key, Data)
+    end;
+find_value(Key, Data, _Options) ->
     find_value(Key, Data).
 
 find_value(_, undefined) ->
@@ -26,6 +39,10 @@ find_value(Key, L) when is_binary(Key), is_list(L) ->
         false           -> undefined;
         {Key, Value}    -> Value
     end;
+find_value(Key, L) when is_integer(Key), is_list(L) ->
+    if Key =< length(L) -> lists:nth(Key, L);
+       true -> undefined
+    end;
 find_value(Key, {GBSize, GBData}) when is_integer(GBSize) ->
     case gb_trees:lookup(Key, {GBSize, GBData}) of
         {value, Val} ->
@@ -34,41 +51,47 @@ find_value(Key, {GBSize, GBData}) when is_integer(GBSize) ->
             undefined
     end;
 find_value(Key, Tuple) when is_tuple(Tuple) ->
-    Module = element(1, Tuple),
-    case Module of
-        dict -> 
+    case element(1, Tuple) of
+        dict ->
             case dict:find(Key, Tuple) of
                 {ok, Val} ->
                     Val;
                 _ ->
                     undefined
             end;
+        _ when is_integer(Key) ->
+            if Key < size(Tuple) -> element(Key, Tuple);
+               true -> undefined
+            end;
         Module ->
             case lists:member({Key, 1}, Module:module_info(exports)) of
                 true ->
-                    Tuple:Key();
+                    case Tuple:Key() of
+                        Val when is_tuple(Val) ->
+                            case element(1, Val) of
+                                'Elixir.Ecto.Associations.BelongsTo' -> Val:get();
+                                'Elixir.Ecto.Associations.HasOne' -> Val:get();
+                                _ -> Val
+                            end;
+                        Val -> Val
+                    end;
                 _ ->
                     undefined
             end
     end.
 
+fetch_value(Key, Data, Options) ->
+    case find_value(Key, Data, Options) of
+        undefined -> [];
+        Val -> Val
+    end.
+
 find_deep_value([Key|Rest],Item) ->
     case find_value(Key,Item) of
-	undefined -> undefined;
-	NewItem -> find_deep_value(Rest,NewItem)
+        undefined -> undefined;
+        NewItem -> find_deep_value(Rest,NewItem)
     end;
 find_deep_value([],Item) -> Item.
-
-fetch_value(Key, Data, FileName, Pos) ->
-    case find_value(Key, Data) of
-        undefined ->
-            throw({undefined_variable, 
-                    [{name, Key},
-                        {file, FileName},
-                        {line, Pos}]});
-        Val ->
-            Val
-    end.
 
 regroup(List, Attribute) ->
     regroup(List, Attribute, []).
@@ -87,15 +110,59 @@ regroup([Item|Rest], Attribute, [[{grouper, PrevGrouper}, {list, PrevList}]|Acc]
             regroup(Rest, Attribute, [[{grouper, Value}, {list, [Item]}], [{grouper, PrevGrouper}, {list, lists:reverse(PrevList)}]|Acc])
     end.
 
-translate(_, none, Default) ->
-    Default;
-translate(String, TranslationFun, Default) when is_function(TranslationFun) ->
+-spec translate(Str, none | translate_fun()) -> Str when
+      Str :: string() | binary().
+translate(String, none) -> String;
+translate(String, TranslationFun)
+  when is_function(TranslationFun) ->
     case TranslationFun(String) of
-        undefined -> Default;
-        <<"">> -> Default;
-        "" -> Default;
+        undefined -> String;
+        <<"">> -> String;
+        "" -> String;
         Str -> Str
     end.
+
+%% @doc Translate and interpolate 'blocktrans' content.
+%% Pre-requisites:
+%%  * `Variables' should be sorted
+%%  * Each interpolation variable should exist
+%%    (String="{{a}}", Variables=[{"b", "b-val"}] will fall)
+%%  * Orddict keys should be string(), not binary()
+-spec translate_block(string() | binary(), translate_fun(), orddict:orddict()) -> iodata().
+translate_block(String, TranslationFun, Variables) ->
+    TransString = case TranslationFun(String) of
+                      No when (undefined == No)
+                              orelse (<<"">> == No)
+                              orelse ("" == No) -> String;
+                      Str -> Str
+                  end,
+    try interpolate_variables(TransString, Variables)
+    catch _:_ ->
+            %% Fallback to default language in case of errors (like Djando does)
+            interpolate_variables(String, Variables)
+    end.
+
+interpolate_variables(Tpl, []) ->
+    Tpl;
+interpolate_variables(Tpl, Variables) ->
+    BTpl = iolist_to_binary(Tpl),
+    interpolate_variables1(BTpl, Variables).
+
+interpolate_variables1(Tpl, Vars) ->
+    %% pre-compile binary patterns?
+    case binary:split(Tpl, <<"{{">>) of
+        [NotFound] ->
+            [NotFound];
+        [Pre, Post] ->
+            case binary:split(Post, <<"}}">>) of
+                [_] -> throw({no_close_var, Post});
+                [Var, Post1] ->
+                    Var1 = string:strip(binary_to_list(Var)),
+                    Value = orddict:fetch(Var1, Vars),
+                    [Pre, Value | interpolate_variables1(Post1, Vars)]
+            end
+    end.
+
 
 are_equal(Arg1, Arg2) when Arg1 =:= Arg2 ->
     true;
@@ -114,23 +181,16 @@ are_equal(Arg1, Arg2) when is_list(Arg1), is_atom(Arg2) ->
 are_equal(_, _) ->
     false.
 
-is_false("") ->
-    true;
-is_false(false) ->
-    true;
-is_false(undefined) ->
-    true;
-is_false("0") ->
-    true;
-is_false(<<"0">>) ->
-    true;
-is_false(<<>>) ->
-    true;
-is_false(_) ->
-    false.
+is_false("") -> true;
+is_false(false) -> true;
+is_false(undefined) -> true;
+is_false(0) -> true;
+is_false("0") -> true;
+is_false(<<"0">>) -> true;
+is_false(<<>>) -> true;
+is_false(_) -> false.
 
-is_true(V) ->
-    not is_false(V).
+is_true(V) -> not is_false(V).
 
 'in'(Sublist, [Sublist|_]) ->
     true;
@@ -208,38 +268,52 @@ stringify_final([El | Rest], Out, true = BinaryStrings) when is_tuple(El) ->
 stringify_final([El | Rest], Out, BinaryStrings) ->
     stringify_final(Rest, [El | Out], BinaryStrings).
 
+to_list(Value, true) ->
+    lists:reverse(to_list(Value, false));
+to_list(Value, false) when is_list(Value) ->
+    Value;
+to_list(Value, false) when is_tuple(Value) ->
+    case element(1, Value) of
+        'Elixir.Ecto.Associations.HasMany' ->
+            Value:to_list();
+        _ ->
+            tuple_to_list(Value)
+    end.
+
 init_counter_stats(List) ->
     init_counter_stats(List, undefined).
 
 init_counter_stats(List, Parent) when is_list(List) ->
-    [{counter, 1}, 
-        {counter0, 0}, 
-        {revcounter, length(List)}, 
-        {revcounter0, length(List) - 1}, 
-        {first, true}, 
-        {last, length(List) =:= 1},
-        {parentloop, Parent}].
+    ListLen = length(List),
+    [{counter, 1},
+     {counter0, 0},
+     {revcounter, ListLen},
+     {revcounter0, ListLen - 1},
+     {first, true},
+     {last, ListLen =:= 1},
+     {parentloop, Parent}].
 
 increment_counter_stats([{counter, Counter}, {counter0, Counter0}, {revcounter, RevCounter},
-        {revcounter0, RevCounter0}, {first, _}, {last, _}, {parentloop, Parent}]) ->
+                         {revcounter0, RevCounter0}, {first, _}, {last, _}, {parentloop, Parent}]) ->
     [{counter, Counter + 1},
-        {counter0, Counter0 + 1},
-        {revcounter, RevCounter - 1},
-        {revcounter0, RevCounter0 - 1},
-        {first, false}, {last, RevCounter0 =:= 1},
-        {parentloop, Parent}].
+     {counter0, Counter0 + 1},
+     {revcounter, RevCounter - 1},
+     {revcounter0, RevCounter0 - 1},
+     {first, false}, {last, RevCounter0 =:= 1},
+     {parentloop, Parent}].
 
-forloop(Fun, Acc0, Values) ->
+forloop(_Fun, [], _Parent) -> empty;
+forloop(Fun, Values, Parent) ->
     push_ifchanged_context(),
-    Result = lists:mapfoldl(Fun, Acc0, Values),
+    Result = lists:mapfoldl(Fun, init_counter_stats(Values, Parent), Values),
     pop_ifchanged_context(),
     Result.
 
 push_ifchanged_context() ->
     IfChangedContextStack = case get(?IFCHANGED_CONTEXT_VARIABLE) of
-        undefined -> [];
-        Stack -> Stack
-    end,
+                                undefined -> [];
+                                Stack -> Stack
+                            end,
     put(?IFCHANGED_CONTEXT_VARIABLE, [[]|IfChangedContextStack]).
 
 pop_ifchanged_context() ->
@@ -282,8 +356,11 @@ spaceless(Contents) ->
 
 read_file(Module, Function, DocRoot, FileName) ->
     AbsName = case filename:absname(FileName) of
-        FileName -> FileName;
-        _ -> filename:join([DocRoot, FileName])
-    end,
-    {ok, Binary} = Module:Function(AbsName),
-    binary_to_list(Binary).
+                  FileName -> FileName;
+                  _ -> filename:join([DocRoot, FileName])
+              end,
+    case Module:Function(AbsName) of
+        {ok, Data} -> Data;
+        {error, Reason} ->
+            throw({read_file, AbsName, Reason})
+    end.
